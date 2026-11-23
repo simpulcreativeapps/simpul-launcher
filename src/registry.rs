@@ -1113,13 +1113,13 @@ pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
             let new_app = SimpulApp {
                 id: found.id.clone(),
                 name: found.name.clone(),
-                tagline: format!("Installed Simpul application detected via {}", found.source_label),
+                tagline: format!("Aplikasi Simpul yang terpasang, ditemukan lewat {}", found.source_label),
                 headline: format!("{} v{} ready to launch directly from Simpul Creative Launcher.", found.name, found.version),
                 about: format!(
                     "{} was automatically discovered on this PC at {} and linked for one-click launch.",
                     found.name, exe_str
                 ),
-                category: "Installed on PC • Simpul".to_string(),
+                category: "Terpasang di komputer ini".to_string(),
                 latest_version: found.version.clone(),
                 released_date: "Detected".to_string(),
                 download_size_mb: real_size_mb.unwrap_or(16.0),
@@ -1461,6 +1461,7 @@ pub fn default_registry() -> SimpulRegistry {
             install_root: root_str,
             agy_command: "agy".to_string(),
             claude_command: "claude".to_string(),
+            reduce_transparency: false,
         },
         apps,
         events,

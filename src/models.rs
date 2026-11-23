@@ -100,9 +100,9 @@ impl BuildProfile {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Release => "RELEASE • DEPLOY READY",
-            Self::Staging => "STAGING • RC",
-            Self::Debug => "DEBUG • NON-DEPLOY",
+            Self::Release => "RILIS",
+            Self::Staging => "STAGING",
+            Self::Debug => "DEBUG",
         }
     }
 
@@ -110,7 +110,7 @@ impl BuildProfile {
         match self {
             Self::Release => "Rilis",
             Self::Staging => "Staging",
-            Self::Debug => "Debug Build",
+            Self::Debug => "Build debug",
         }
     }
 }
@@ -158,8 +158,8 @@ impl PackageFormat {
         match self {
             Self::Msi => "Installer (.msi)",
             Self::PortableZip => "Portable (.zip)",
-            Self::NativeExe => "Release Binary (.exe)",
-            Self::ManifestBundle => "App Bundle",
+            Self::NativeExe => "Program (.exe)",
+            Self::ManifestBundle => "Paket aplikasi",
         }
     }
 }
@@ -314,10 +314,10 @@ pub enum SortKey {
 impl SortKey {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Suite => "Suite order",
-            Self::Name => "Name (A–Z)",
-            Self::Status => "Install status",
-            Self::Newest => "Newest release",
+            Self::Suite => "Urutan bawaan",
+            Self::Name => "Nama (A–Z)",
+            Self::Status => "Status pemasangan",
+            Self::Newest => "Rilis terbaru",
         }
     }
 }
@@ -333,10 +333,10 @@ pub enum CheckEvery {
 impl CheckEvery {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Hour => "Every hour (3600s)",
-            Self::FourHours => "Every 4 hours",
-            Self::Day => "Once a day",
-            Self::Never => "Only when I ask",
+            Self::Hour => "Setiap jam",
+            Self::FourHours => "Setiap 4 jam",
+            Self::Day => "Sekali sehari",
+            Self::Never => "Hanya saat diminta",
         }
     }
 
@@ -363,6 +363,9 @@ pub struct LauncherSettings {
     pub install_root: String,
     pub agy_command: String,
     pub claude_command: String,
+    /// Tema Liquid Glass tanpa tembus pandang: panel padat dan tanpa latar cahaya.
+    #[serde(default)]
+    pub reduce_transparency: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

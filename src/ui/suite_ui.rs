@@ -252,7 +252,7 @@ impl SimpulLauncherApp {
                     if let Some(url) = notice.source_url.as_deref() {
                         if ui
                             .add(
-                                egui::Button::new("Buka source code")
+                                egui::Button::new("Buka kode sumber")
                                     .min_size(Vec2::new(180.0, SECONDARY_BTN_HEIGHT)),
                             )
                             .clicked()
@@ -315,7 +315,7 @@ impl SimpulLauncherApp {
                         );
                         if let Some(url) = n.source_url.as_deref() {
                             ui.hyperlink_to(
-                                RichText::new("Source code").size(FONT_CAPTION),
+                                RichText::new("Kode sumber").size(FONT_CAPTION),
                                 url,
                             );
                         }
@@ -508,7 +508,7 @@ impl SimpulLauncherApp {
                 ui.separator();
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Source code").size(FONT_CAPTION).color(pal.ink_muted));
+                    ui.label(RichText::new("Kode sumber").size(FONT_CAPTION).color(pal.ink_muted));
                     ui.hyperlink_to(
                         RichText::new("github.com/simpulcreativeapps").size(FONT_CAPTION),
                         SOURCE_URL,

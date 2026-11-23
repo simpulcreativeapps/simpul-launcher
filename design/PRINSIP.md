@@ -11,6 +11,8 @@ Butir bertanda **[tes]** dijaga otomatis oleh `cargo test`; sisanya diperiksa sa
   latar cahaya. Latar diredupkan dan panel memakai kaca gelap; kalau kaca membuat teks
   sulit dibaca, kacanya yang mengalah.
 - Jendela dialog selalu berlatar padat.
+- **[tes]** Pengaturan "Kurangi transparansi" mengganti tema kaca dengan panel padat,
+  dan versi padat itu memenuhi aturan kontras yang sama.
 - Warna tidak pernah menjadi satu-satunya penanda: status selalu disertai teks.
 
 ## 2. Satu aksi utama per bagian
@@ -29,6 +31,7 @@ Butir bertanda **[tes]** dijaga otomatis oleh `cargo test`; sisanya diperiksa sa
 
 ## 4. Jujur
 
+- Pengaturan yang belum berfungsi tidak ditampilkan.
 - Antarmuka tidak menampilkan klaim yang tidak dicek (misalnya "terverifikasi" atau
   "terhubung") kecuali memang baru saja diperiksa.
 - Daftar aplikasi hanya memuat yang sudah dirilis atau terpasang.
@@ -36,6 +39,8 @@ Butir bertanda **[tes]** dijaga otomatis oleh `cargo test`; sisanya diperiksa sa
 
 ## 5. Mudah dikenai
 
+- **[tes]** Tepi kontrol, cincin fokus, dan tombol terpilih berkontras minimal 3:1 terhadap
+  sekitarnya (WCAG 2.2 butir 1.4.11). Cincin fokus setebal 2 px.
 - **[tes]** Target klik minimal 24 x 24 px (WCAG 2.2 butir 2.5.8); tombol di sini 28 px ke atas.
 - Tindakan yang tidak bisa dibatalkan selalu meminta konfirmasi.
 - Semua dialog bisa ditutup dengan Esc.
@@ -57,7 +62,7 @@ Butir bertanda **[tes]** dijaga otomatis oleh `cargo test`; sisanya diperiksa sa
 
 ## Yang belum memenuhi
 
-- Sebagian teks di laci detail, pengaturan, dan menu urutan masih berbahasa Inggris.
-- Kontras garis tepi komponen (3:1) belum diuji otomatis.
-- Fokus papan ketik memakai gaya bawaan egui dan belum diperiksa per tema.
-- Belum ada pengaturan "kurangi transparansi" untuk tema kaca.
+- Hasil nyata fokus papan ketik baru diperiksa lewat kode dan tes warna, belum dicoba
+  dengan menekan Tab di setiap layar.
+- Laci detail aplikasi dan panel "CLI dan agen" belum ditinjau lewat tangkapan layar di semua tema.
+- Nama tema dan beberapa istilah teknis (Grid, CLI, Liquid Glass) sengaja tetap berbahasa Inggris.

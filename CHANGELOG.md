@@ -7,6 +7,8 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 ## [Belum dirilis]
 
 ### Ditambahkan
+- Pengaturan **Kurangi transparansi**: tema Liquid Glass memakai panel padat tanpa latar cahaya.
+- Tes otomatis kontras komponen 3:1 (tepi kontrol, cincin fokus, tombol terpilih).
 - Menu **Tema** di header dengan empat tema baru: Expressive Biru, Expressive Ceria,
   Liquid Glass Aurora, dan Liquid Glass Grafit. Tema bawaan gelap dan terang tetap ada.
 - Katalog mengikuti manifest bertanda tangan: yang tampil hanya aplikasi yang sudah
@@ -24,6 +26,9 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 - Berkas `NOTICE` dan teks lisensi ArtCraft Launcher sebagai karya asal.
 
 ### Diubah
+- Seluruh teks antarmuka (laci detail, pengaturan, panel agen, formulir impor, menu urutan)
+  kini berbahasa Indonesia.
+- Fokus papan ketik dan teks terpilih memakai cincin 2 px dan warna yang lolos 3:1 di semua tema.
 - Palet semua tema disusun ulang supaya setiap teks berkontras minimal 4,5:1 (WCAG 2.2),
   dijaga oleh tes otomatis. Tema Liquid Glass memakai kaca gelap di atas latar yang diredupkan.
 - Hero disederhanakan: satu judul, satu aksi utama, tanpa label status yang tidak dicek.
@@ -35,6 +40,7 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 - Versi launcher dibaca dari satu sumber (`Cargo.toml`).
 
 ### Diperbaiki
+- Kolom perintah CLI di jendela Pengaturan terpotong di tepi kanan.
 - Teks putih pada tombol terpilih dan tombol Pasang tidak terbaca di beberapa tema.
 - Kolom `version` dan `id` pada manifest impor disaring, sehingga instalasi dan
   penghapusan tidak bisa keluar dari folder aplikasi.
@@ -42,6 +48,8 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 - Aplikasi berstatus merah tidak bisa dibuka dari launcher maupun CLI.
 
 ### Dihapus
+- Pilihan pembaruan otomatis di Pengaturan, karena belum berfungsi.
+- Tulisan "Verifying SHA-256 checksum" pada antrean pasang.
 - Katalog contoh bawaan beserta versi dan riwayat aktivitas karangan.
 - Tulisan "SHA-256 verified" dan "deploy-verified" yang tidak didukung pengecekan nyata.
 - Dua berkas exe dan path komputer pembuat dari source.

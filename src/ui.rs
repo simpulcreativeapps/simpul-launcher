@@ -37,6 +37,9 @@ const HERO_PRIMARY_FILL: Color32 = Color32::from_rgb(236, 240, 255);
 const HERO_PRIMARY_INK: Color32 = Color32::from_rgb(12, 16, 38);
 const HERO_QUIET_FILL: Color32 = Color32::from_rgb(38, 46, 82);
 
+/// Tebal cincin fokus papan ketik.
+const FOCUS_RING_WIDTH: f32 = 2.0;
+
 const SIMPUL_ICON_BYTES: &[u8] = include_bytes!("../assets/simpul-icon.png");
 const SIMPUL_SPLASH_BYTES: &[u8] = include_bytes!("../assets/simpul-splash.png");
 const SIMPUL_HERO_BYTES: &[u8] = include_bytes!("../assets/simpul-hero-banner.png");
@@ -135,6 +138,8 @@ struct Palette {
     cyan: Color32,
     cyan_soft: Color32,
     danger: Color32,
+    /// Garis tepi kontrol interaktif (kolom isian, tombol netral): minimal 3:1.
+    control_edge: Color32,
     /// Warna aksen untuk TEKS dan pil (lebih terang di tema gelap, lebih tua di tema terang).
     accent_ink: Color32,
     /// Warna teks di atas isian aksen, hijau, dan bahaya.
@@ -163,6 +168,7 @@ impl Palette {
                 bg_subtle: Color32::from_rgb(38, 43, 66),
                 border: Color32::from_rgb(46, 52, 78),
                 border_strong: Color32::from_rgb(98, 120, 200),
+                control_edge: Color32::from_rgb(118, 126, 160),
                 ink_primary: Color32::from_rgb(242, 243, 248),
                 ink_secondary: Color32::from_rgb(190, 196, 220),
                 ink_muted: Color32::from_rgb(150, 158, 188),
@@ -196,6 +202,7 @@ impl Palette {
                 bg_subtle: Color32::from_rgb(230, 234, 245),
                 border: Color32::from_rgb(214, 219, 232),
                 border_strong: Color32::from_rgb(120, 140, 210),
+                control_edge: Color32::from_rgb(116, 124, 148),
                 ink_primary: Color32::from_rgb(17, 19, 28),
                 ink_secondary: Color32::from_rgb(60, 66, 86),
                 ink_muted: Color32::from_rgb(88, 95, 114),
@@ -223,6 +230,17 @@ impl Palette {
     }
 }
 
+/// Tumpuk warna tembus pandang (premultiplied, seperti di egui) di atas latar padat.
+fn flatten(top: Color32, bottom: Color32) -> Color32 {
+    let keep = 1.0 - f32::from(top.a()) / 255.0;
+    let mix = |t: u8, b: u8| (f32::from(t) + f32::from(b) * keep).round().min(255.0) as u8;
+    Color32::from_rgb(
+        mix(top.r(), bottom.r()),
+        mix(top.g(), bottom.g()),
+        mix(top.b(), bottom.b()),
+    )
+}
+
 /// Kaca gelap: lapisan peredup di atas latar cahaya, sesuai pedoman keterbacaan
 /// (kalau kaca membuat teks sulit dibaca, redupkan latarnya).
 fn tinted(r: u8, g: u8, b: u8, alpha: u8) -> Color32 {
@@ -232,7 +250,37 @@ fn tinted(r: u8, g: u8, b: u8, alpha: u8) -> Color32 {
 impl Palette {
     /// Palet untuk setiap pilihan tema. Tema baru berangkat dari palet dasar lalu
     /// mengganti permukaan, tinta, aksen, dan bentuk sudutnya.
-    fn for_choice(choice: ThemeChoice, system_dark: bool) -> Self {
+    fn for_choice(choice: ThemeChoice, system_dark: bool, reduce_transparency: bool) -> Self {
+        let pal = Self::for_choice_raw(choice, system_dark);
+        if reduce_transparency && choice.is_glass() {
+            pal.without_transparency(choice)
+        } else {
+            pal
+        }
+    }
+
+    /// Versi padat tema kaca: setiap permukaan ditumpuk di atas warna dasar latarnya.
+    fn without_transparency(self, choice: ThemeChoice) -> Self {
+        let base = match choice {
+            ThemeChoice::GlassAurora => Color32::from_rgb(7, 9, 22),
+            _ => Color32::from_rgb(9, 10, 12),
+        };
+        let flat = |c: Color32| flatten(c, base);
+        let card = flat(self.bg_card);
+        Self {
+            bg_canvas: base,
+            bg_header: flat(self.bg_header),
+            bg_card: card,
+            bg_card_hover: flat(self.bg_card_hover),
+            bg_elevated: flatten(self.bg_elevated, card),
+            bg_subtle: flatten(self.bg_subtle, card),
+            border: flatten(self.border, card),
+            border_strong: flatten(self.border_strong, card),
+            ..self
+        }
+    }
+
+    fn for_choice_raw(choice: ThemeChoice, system_dark: bool) -> Self {
         match choice {
             ThemeChoice::Dark => Self::for_theme(true),
             ThemeChoice::Light => Self::for_theme(false),
@@ -264,6 +312,7 @@ impl Palette {
                 bg_subtle: Color32::from_rgb(255, 220, 199),
                 border: Color32::from_rgb(239, 220, 205),
                 border_strong: Color32::from_rgb(214, 92, 130),
+                control_edge: Color32::from_rgb(140, 116, 100),
                 ink_primary: Color32::from_rgb(35, 26, 20),
                 ink_secondary: Color32::from_rgb(82, 66, 56),
                 ink_muted: Color32::from_rgb(104, 86, 74),
@@ -282,6 +331,7 @@ impl Palette {
                 bg_subtle: tinted(54, 62, 110, 225),
                 border: tinted(255, 255, 255, 34),
                 border_strong: tinted(255, 255, 255, 80),
+                control_edge: Color32::from_rgb(150, 158, 196),
                 ink_primary: Color32::from_rgb(244, 246, 255),
                 ink_secondary: Color32::from_rgb(210, 216, 244),
                 ink_muted: Color32::from_rgb(184, 192, 228),
@@ -299,6 +349,7 @@ impl Palette {
                 bg_subtle: tinted(54, 57, 68, 230),
                 border: tinted(255, 255, 255, 26),
                 border_strong: tinted(255, 255, 255, 64),
+                control_edge: Color32::from_rgb(140, 145, 158),
                 ink_primary: Color32::from_rgb(243, 244, 246),
                 ink_secondary: Color32::from_rgb(200, 204, 214),
                 ink_muted: Color32::from_rgb(170, 175, 188),
@@ -428,6 +479,9 @@ impl SimpulLauncherApp {
             {
                 registry.settings.theme = theme;
             }
+            if std::env::var("SIMPUL_SHOT_REDUCE").is_ok() {
+                registry.settings.reduce_transparency = true;
+            }
         }
         let integrations = detect_integrations(&registry.settings);
         let last_mtime = if ephemeral { None } else { registry_mtime() };
@@ -451,7 +505,7 @@ impl SimpulLauncherApp {
             filter: FilterTab::All,
             search_query: String::new(),
             drawer: RightDrawer::None,
-            settings_open: false,
+            settings_open: shot_view == "settings",
             uninstall_confirm_id: None,
             launch_options_app_id: None,
             launch_options_draft: String::new(),
@@ -617,7 +671,7 @@ impl SimpulLauncherApp {
                     app.install_state = InstallState::Installed {
                         version: done_task.target_version.clone(),
                         install_path: format!("apps\\{}\\{}", app.id, done_task.target_version),
-                        installed_at: "Just now".to_string(),
+                        installed_at: "Baru saja".to_string(),
                     };
                     let msg = format!(
                         "{} terpasang: v{}",
@@ -665,7 +719,7 @@ impl SimpulLauncherApp {
             if let Some(latest) = self.registry.events.first() {
                 if Some(latest.summary.as_str()) != prev_event.as_deref() {
                     let note = latest.summary.clone();
-                    self.push_toast(now, format!("Live Sync: {note}"), false);
+                    self.push_toast(now, format!("Sinkron: {note}"), false);
                 }
             }
         }
@@ -675,6 +729,7 @@ impl SimpulLauncherApp {
         let pal = Palette::for_choice(
             self.registry.settings.theme,
             ctx.style().visuals.dark_mode,
+            self.registry.settings.reduce_transparency,
         );
         let dark = pal.dark;
         let mut visuals = if dark {
@@ -687,19 +742,22 @@ impl SimpulLauncherApp {
         visuals.extreme_bg_color = pal.bg_header;
         visuals.faint_bg_color = pal.bg_subtle;
         visuals.override_text_color = Some(pal.ink_primary);
-        visuals.selection.bg_fill = pal.accent;
-        visuals.selection.stroke = Stroke::new(1.0_f32, pal.on_accent);
+        // Teks terpilih dan cincin fokus kolom isian memakai tinta aksen di atas aksen lembut.
+        visuals.selection.bg_fill = pal.accent_soft;
+        visuals.selection.stroke = Stroke::new(FOCUS_RING_WIDTH, pal.accent_ink);
         visuals.widgets.noninteractive.bg_fill = pal.bg_card;
         visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, pal.border);
         visuals.widgets.inactive.bg_fill = pal.bg_elevated;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, pal.border);
         visuals.window_corner_radius = pal.card_radius.min(20.0).into();
         visuals.menu_corner_radius = pal.control_radius.into();
         visuals.widgets.inactive.corner_radius = pal.control_radius.into();
         visuals.widgets.hovered.bg_fill = pal.bg_subtle;
-        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, pal.accent);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, pal.accent_ink);
         visuals.widgets.hovered.corner_radius = pal.control_radius.into();
         visuals.widgets.active.bg_fill = pal.accent;
+        // egui memakai gaya "active" untuk kontrol yang sedang difokus lewat papan ketik.
+        visuals.widgets.active.bg_stroke = Stroke::new(FOCUS_RING_WIDTH, pal.accent_ink);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, pal.control_edge);
         visuals.widgets.active.corner_radius = pal.control_radius.into();
         ctx.set_visuals(visuals);
         pal
@@ -708,7 +766,7 @@ impl SimpulLauncherApp {
     /// Tema Liquid Glass: gambar bidang cahaya di belakang semua panel.
     fn paint_glass_backdrop(&mut self, ctx: &egui::Context) {
         let theme = self.registry.settings.theme;
-        if !theme.is_glass() {
+        if !theme.is_glass() || self.registry.settings.reduce_transparency {
             self.glass_backdrop = None;
             return;
         }
@@ -1522,7 +1580,7 @@ impl SimpulLauncherApp {
 
                 if let Some(task) = active_task {
                     let (label, frac) = match task.stage {
-                        QueueStage::Queued => ("Waiting for other installs…".to_string(), 0.05),
+                        QueueStage::Queued => ("Menunggu pemasangan lain…".to_string(), 0.05),
                         QueueStage::Downloading { progress } => (
                             format!(
                                 "Downloading {:.1} / {:.1} MB",
@@ -1532,7 +1590,7 @@ impl SimpulLauncherApp {
                             progress * 0.65,
                         ),
                         QueueStage::VerifyingChecksum { progress } => (
-                            "Verifying SHA-256 checksum…".to_string(),
+                            "Menyiapkan…".to_string(),
                             0.65 + progress * 0.18,
                         ),
                         QueueStage::Installing { progress } => (
@@ -1630,11 +1688,11 @@ impl SimpulLauncherApp {
                                 RichText::new("•••").size(FONT_MICRO).color(pal.ink_secondary),
                                 |ui| {
                                     ui.set_min_width(190.0);
-                                    if ui.button("App details & release notes").clicked() {
+                                    if ui.button("Detail aplikasi dan catatan rilis").clicked() {
                                         self.drawer = RightDrawer::AppDetails(app.id.clone());
                                         ui.close_menu();
                                     }
-                                    if ui.button("Open workspace in Antigravity (agy)").clicked() {
+                                    if ui.button("Buka folder kerja di Antigravity (agy)").clicked() {
                                         let ws = app.workspace_path.clone().unwrap_or_else(|| {
                                             self.registry.settings.install_root.clone()
                                         });
@@ -1651,14 +1709,14 @@ impl SimpulLauncherApp {
                                                 ui.ctx().copy_text(cmd.clone());
                                                 self.push_toast(
                                                     now,
-                                                    format!("Copied agy command: {cmd}"),
+                                                    format!("Perintah agy disalin: {cmd}"),
                                                     false,
                                                 );
                                             }
                                         }
                                         ui.close_menu();
                                     }
-                                    if ui.button("Copy Claude CLI install command").clicked() {
+                                    if ui.button("Salin perintah pasang untuk Claude").clicked() {
                                         let cmd = format!(
                                             "simpul-creative-launcher install {} --agent claude",
                                             app.id
@@ -1674,14 +1732,14 @@ impl SimpulLauncherApp {
                                         ui.close_menu();
                                     }
                                     ui.separator();
-                                    let pin_lbl = if app.pinned { "Unpin" } else { "Pin to top" };
+                                    let pin_lbl = if app.pinned { "Unpin" } else { "Sematkan di atas" };
                                     if ui.button(pin_lbl).clicked() {
                                         self.registry.apps[idx].pinned = !app.pinned;
                                         self.persist();
                                         ui.close_menu();
                                     }
                                     let hide_lbl =
-                                        if app.hidden { "Unhide App" } else { "Hide App" };
+                                        if app.hidden { "Tampilkan lagi" } else { "Sembunyikan" };
                                     if ui.button(hide_lbl).clicked() {
                                         self.registry.apps[idx].hidden = !app.hidden;
                                         self.persist();
@@ -1745,7 +1803,7 @@ impl SimpulLauncherApp {
                     .show(ui, |ui| {
                         for col in [
                             "App",
-                            "Build Gate",
+                            "Jenis build",
                             "Origin / Agent",
                             "Installed",
                             "Latest",
@@ -1983,14 +2041,14 @@ impl SimpulLauncherApp {
             ui.add_space(8.0);
 
             ui.label(
-                RichText::new("AI & CLI Integration")
+                RichText::new("Integrasi CLI dan agen")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_primary),
             );
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("🚀 Open in Antigravity (agy)").clicked() {
+                if ui.button("Buka di Antigravity (agy)").clicked() {
                     let ws = app
                         .workspace_path
                         .clone()
@@ -2000,11 +2058,11 @@ impl SimpulLauncherApp {
                         Err(_) => {
                             let cmd = format!("{} \"{}\"", self.registry.settings.agy_command, ws);
                             ui.ctx().copy_text(cmd.clone());
-                            self.push_toast(now, format!("Copied agy command: {cmd}"), false);
+                            self.push_toast(now, format!("Perintah agy disalin: {cmd}"), false);
                         }
                     }
                 }
-                if ui.button("🤖 Copy Claude Install CLI").clicked() {
+                if ui.button("Salin perintah untuk Claude").clicked() {
                     let cmd = format!(
                         "simpul-creative-launcher install {} --agent claude",
                         app.id
@@ -2016,7 +2074,7 @@ impl SimpulLauncherApp {
 
             ui.add_space(12.0);
             ui.label(
-                RichText::new("Installed Executable")
+                RichText::new("Berkas program")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_primary),
@@ -2055,7 +2113,7 @@ impl SimpulLauncherApp {
                         .desired_width((ui.available_width() - 96.0).max(120.0))
                         .hint_text("C:\\Path\\To\\App.exe"),
                 );
-                if ui.button("Link .exe").clicked() {
+                if ui.button("Tautkan .exe").clicked() {
                     let draft = self.exec_path_draft.clone();
                     match set_app_executable_path(&mut self.registry, &app.id, &draft) {
                         Ok(msg) => {
@@ -2094,7 +2152,7 @@ impl SimpulLauncherApp {
 
             ui.add_space(12.0);
             ui.label(
-                RichText::new("Package & Integrity")
+                RichText::new("Paket")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_primary),
@@ -2167,7 +2225,7 @@ impl SimpulLauncherApp {
     fn draw_agent_hub_drawer(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("CLI • Antigravity (agy) • Claude Bridge")
+                RichText::new("CLI dan agen")
                     .size(FONT_BODY)
                     .strong()
                     .color(pal.ink_primary),
@@ -2198,7 +2256,7 @@ impl SimpulLauncherApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(
-                        RichText::new("Detected Agent Endpoints")
+                        RichText::new("Agen yang terdeteksi")
                             .size(FONT_CAPTION)
                             .strong(),
                     );
@@ -2209,7 +2267,7 @@ impl SimpulLauncherApp {
                             self.integrations
                                 .agy_path
                                 .as_deref()
-                                .unwrap_or("Ready via `agy` command")
+                                .unwrap_or("Siap lewat perintah `agy`")
                         ))
                         .size(FONT_MICRO)
                         .color(pal.cyan),
@@ -2220,7 +2278,7 @@ impl SimpulLauncherApp {
                             self.integrations
                                 .claude_path
                                 .as_deref()
-                                .unwrap_or("Ready via `claude` CLI bridge")
+                                .unwrap_or("Siap lewat perintah `claude`")
                         ))
                         .size(FONT_MICRO)
                         .color(pal.purple),
@@ -2234,7 +2292,7 @@ impl SimpulLauncherApp {
 
             ui.add_space(10.0);
             ui.label(
-                RichText::new("1. Claude Import & Install Command")
+                RichText::new("1. Perintah impor dan pasang untuk Claude")
                     .size(FONT_CAPTION)
                     .strong(),
             );
@@ -2253,15 +2311,15 @@ impl SimpulLauncherApp {
                             .monospace()
                             .color(pal.purple),
                     );
-                    if ui.small_button("📋 Copy for Claude").clicked() {
+                    if ui.small_button("Salin untuk Claude").clicked() {
                         ui.ctx().copy_text(claude_snippet);
-                        self.push_toast(now, "Copied Claude CLI command.", false);
+                        self.push_toast(now, "Perintah Claude disalin.", false);
                     }
                 });
 
             ui.add_space(8.0);
             ui.label(
-                RichText::new("2. Antigravity (agy) Release Deploy Command")
+                RichText::new("2. Perintah pasang untuk Antigravity (agy)")
                     .size(FONT_CAPTION)
                     .strong(),
             );
@@ -2280,16 +2338,16 @@ impl SimpulLauncherApp {
                             .monospace()
                             .color(pal.cyan),
                     );
-                    if ui.small_button("📋 Copy for agy").clicked() {
+                    if ui.small_button("Salin untuk agy").clicked() {
                         ui.ctx().copy_text(agy_snippet);
-                        self.push_toast(now, "Copied Antigravity (agy) CLI command.", false);
+                        self.push_toast(now, "Perintah agy disalin.", false);
                     }
                 });
 
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Recent Agent & CLI Activity")
+                    RichText::new("Aktivitas agen dan CLI terakhir")
                         .size(FONT_CAPTION)
                         .strong(),
                 );
@@ -2348,7 +2406,7 @@ impl SimpulLauncherApp {
 
         if self.import_form.open {
             let mut keep_open = true;
-            egui::Window::new("Import & Install Application to Simpul Launcher")
+            egui::Window::new("Impor aplikasi")
                 .collapsible(false)
                 .resizable(false)
                 .default_width(460.0)
@@ -2373,14 +2431,14 @@ impl SimpulLauncherApp {
                         .num_columns(2)
                         .spacing([10.0, 8.0])
                         .show(ui, |ui| {
-                            ui.label("Artifact / Manifest:");
+                            ui.label("Berkas / manifest:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.path_input)
                                     .desired_width(300.0),
                             );
                             ui.end_row();
 
-                            ui.label("App Name:");
+                            ui.label("Nama aplikasi:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.name_input)
                                     .hint_text("mis. Simpul Sync")
@@ -2388,22 +2446,22 @@ impl SimpulLauncherApp {
                             );
                             ui.end_row();
 
-                            ui.label("Version:");
+                            ui.label("Versi:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.version_input)
                                     .desired_width(140.0),
                             );
                             ui.end_row();
 
-                            ui.label("Tagline:");
+                            ui.label("Keterangan:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.tagline_input)
-                                    .hint_text("Short description of the tool")
+                                    .hint_text("Keterangan singkat")
                                     .desired_width(300.0),
                             );
                             ui.end_row();
 
-                            ui.label("Imported By:");
+                            ui.label("Diimpor oleh:");
                             ui.horizontal(|ui| {
                                 ui.selectable_value(
                                     &mut self.import_form.origin,
@@ -2440,13 +2498,13 @@ impl SimpulLauncherApp {
                                 );
                                 ui.checkbox(
                                     &mut self.import_form.allow_debug_override,
-                                    "Allow debug build anyway (sandbox testing only)",
+                                    "Izinkan build debug (hanya untuk uji coba)",
                                 );
                             });
                     } else {
                         draw_pill(
                             ui,
-                            "Detected Profile: RELEASE (Layak Deploy)",
+                            "Jenis build terdeteksi: rilis",
                             pal.emerald_soft,
                             pal.emerald,
                             FONT_MICRO,
@@ -2456,7 +2514,7 @@ impl SimpulLauncherApp {
                     ui.add_space(4.0);
                     ui.checkbox(
                         &mut self.import_form.auto_install,
-                        "Install immediately into Simpul Launcher apps directory",
+                        "Langsung pasang ke folder aplikasi",
                     );
 
                     if let Some(ref err) = self.import_form.error_banner {
@@ -2469,7 +2527,7 @@ impl SimpulLauncherApp {
                         let submit_lbl = if self.import_form.auto_install {
                             "Import & Install"
                         } else {
-                            "Import to Catalog"
+                            "Impor"
                         };
                         if ui
                             .add(
@@ -2540,13 +2598,18 @@ impl SimpulLauncherApp {
                 .default_width(470.0)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .open(&mut open)
+                .frame(
+                    Frame::window(&ctx.style())
+                        .fill(pal.bg_window)
+                        .inner_margin(Margin::same(18)),
+                )
                 .show(ctx, |ui| {
                     let mut changed = false;
-                    ui.label(RichText::new("Deployment & Security Gate").strong());
+                    ui.label(RichText::new("Keamanan pemasangan").strong());
                     changed |= ui
                         .checkbox(
                             &mut self.registry.settings.require_release_profile,
-                            "Strict Deploy Gate — Hanya izinkan software Release (tolak Debug build)",
+                            "Hanya izinkan build rilis (tolak build debug)",
                         )
                         .changed();
 
@@ -2560,7 +2623,7 @@ impl SimpulLauncherApp {
                         .changed();
                     ui.label(
                         RichText::new(
-                            "New installs from GUI, Claude, and agy use this folder. Existing installs keep their location.",
+                            "Pemasangan baru memakai folder ini. Aplikasi yang sudah terpasang tetap di tempatnya.",
                         )
                         .size(FONT_MICRO)
                         .color(pal.ink_muted),
@@ -2586,29 +2649,32 @@ impl SimpulLauncherApp {
                                     .changed();
                             }
                         });
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Tampilan").strong());
                     changed |= ui
                         .checkbox(
-                            &mut self.registry.settings.auto_update,
-                            "Automatically download and install updates",
-                        )
-                        .changed();
-                    changed |= ui
-                        .checkbox(
-                            &mut self.registry.settings.batch_updates,
-                            "Ask for permission once when updating all apps",
+                            &mut self.registry.settings.reduce_transparency,
+                            "Kurangi transparansi (tema Liquid Glass memakai panel padat)",
                         )
                         .changed();
 
                     ui.add_space(8.0);
-                    ui.label(RichText::new("CLI & Agent Binaries").strong());
+                    ui.label(RichText::new("Perintah CLI agen").strong());
                     ui.horizontal(|ui| {
                         ui.label("Antigravity CLI:");
                         changed |= ui
-                            .text_edit_singleline(&mut self.registry.settings.agy_command)
+                            .add(
+                                TextEdit::singleline(&mut self.registry.settings.agy_command)
+                                    .desired_width(120.0),
+                            )
                             .changed();
                         ui.label("Claude CLI:");
                         changed |= ui
-                            .text_edit_singleline(&mut self.registry.settings.claude_command)
+                            .add(
+                                TextEdit::singleline(&mut self.registry.settings.claude_command)
+                                    .desired_width(120.0),
+                            )
                             .changed();
                     });
 
@@ -2675,7 +2741,7 @@ impl SimpulLauncherApp {
                 .find(|a| a.id == target_id)
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| target_id.clone());
-            egui::Window::new(format!("{app_name} launch options"))
+            egui::Window::new(format!("Opsi peluncuran {app_name}"))
                 .collapsible(false)
                 .resizable(false)
                 .default_width(400.0)
@@ -2683,7 +2749,7 @@ impl SimpulLauncherApp {
                 .show(ctx, |ui| {
                     ui.label(
                         RichText::new(
-                            "Flags added each time the app is opened. Separate flags with spaces; quote values containing spaces.",
+                            "Opsi yang ditambahkan setiap kali aplikasi dibuka. Pisahkan dengan spasi; beri tanda kutip pada nilai yang memuat spasi.",
                         )
                         .size(FONT_CAPTION)
                         .color(pal.ink_secondary),
@@ -2882,7 +2948,7 @@ impl eframe::App for SimpulLauncherApp {
                             ui.add_space(56.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
-                                    RichText::new("No apps found")
+                                    RichText::new("Belum ada aplikasi")
                                         .size(FONT_HEADING)
                                         .strong()
                                         .color(pal.ink_secondary),
@@ -3012,9 +3078,16 @@ mod design_tests {
     fn every_theme_meets_wcag_text_contrast() {
         const MIN: f64 = 4.5;
         let mut failures = Vec::new();
+        let mut low_contrast_parts: Vec<String> = Vec::new();
         for theme in ThemeChoice::ALL {
-            let pal = Palette::for_choice(theme, true);
-            for backdrop in backdrops(theme, &pal) {
+          for reduce in [false, true] {
+            let pal = Palette::for_choice(theme, true, reduce);
+            let outer = if reduce && theme.is_glass() {
+                vec![pal.bg_canvas]
+            } else {
+                backdrops(theme, &pal)
+            };
+            for backdrop in outer {
                 let canvas = over(pal.bg_canvas, backdrop);
                 let card = over(pal.bg_card, canvas);
                 let surfaces = [
@@ -3046,10 +3119,31 @@ mod design_tests {
                 check("teks bahaya di kartu".into(), pal.danger, card);
                 check("teks di tombol bahaya".into(), pal.on_danger, pal.danger);
                 check("teks di tombol hijau".into(), pal.on_emerald, pal.emerald);
+
+                // WCAG 2.2 butir 1.4.11: tepi kontrol, fokus, dan keadaan terpilih >= 3:1.
+                let mut check3 = |what: String, fg: Color32, bg: Color32| {
+                    let ratio = contrast(fg, bg);
+                    if ratio < 3.0 {
+                        low_contrast_parts.push(format!("{}: {what} = {ratio:.2}", theme.label()));
+                    }
+                };
+                let button = over(pal.bg_elevated, card);
+                for (name, surface) in [("kanvas", canvas), ("kartu", card), ("tombol", button)] {
+                    check3(format!("cincin fokus di {name}"), pal.accent_ink, surface);
+                    check3(format!("tepi kontrol di {name}"), pal.control_edge, surface);
+                }
+                check3("tombol terpilih terhadap kartu".into(), pal.accent, card);
+                check3("tombol terpilih terhadap kanvas".into(), pal.accent, canvas);
             }
+          }
         }
         check_hero(&mut failures);
         assert!(failures.is_empty(), "kontras di bawah 4.5:1:\n{}", failures.join("\n"));
+        assert!(
+            low_contrast_parts.is_empty(),
+            "kontras komponen di bawah 3:1:\n{}",
+            low_contrast_parts.join("\n")
+        );
     }
 
     fn check_hero(failures: &mut Vec<String>) {
