@@ -6,6 +6,20 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.4.0] - 2026-11-23
+
+### Ditambahkan
+- **Akun Simpul (opsional)**: tombol Masuk di header dan jendela Akun. Masuk lewat Google
+  di browser; launcher tidak pernah melihat kata sandi. Tersedia Keluar dan Hapus akun.
+- **Sertifikat pemasangan**: saat masuk, pemasangan launcher didaftarkan; aplikasi yang
+  dipasang lewat launcher ikut didaftarkan. Sertifikat bertanda tangan server, terikat ke
+  kunci pemasangan komputer ini, dan diperiksa secara lokal.
+- Baris status kartu aplikasi menampilkan "Bersertifikat", "Tanpa sertifikat", atau
+  "Sertifikat tidak sah" (salinan dari pemasangan lain).
+
+### Diubah
+- Keterangan privasi di jendela Tentang dan README menyebut data akun.
+
 ## [1.3.0] - 2026-11-23
 
 ### Ditambahkan

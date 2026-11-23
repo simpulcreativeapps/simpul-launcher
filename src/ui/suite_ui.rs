@@ -587,6 +587,7 @@ impl SimpulLauncherApp {
 
     /// Tombol Donasi dan Tentang di header.
     pub(super) fn draw_suite_header_buttons(&mut self, ui: &mut egui::Ui, pal: Palette) {
+        self.draw_account_button(ui, pal);
         if ui
             .add(
                 egui::Button::new(
@@ -635,19 +636,27 @@ impl SimpulLauncherApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             if self.donate_open {
                 self.donate_open = false;
+            } else if self.account_open {
+                self.account_open = false;
             } else if self.bug_open {
                 self.bug_open = false;
             } else if self.about_open {
                 self.about_open = false;
             }
         }
+        self.poll_account(now);
+        if !self.certs_loaded {
+            self.certs_loaded = true;
+            self.refresh_certificates();
+        }
+        self.draw_account_window(ctx, pal, now);
         self.draw_about_window(ctx, pal);
         self.draw_donate_window(ctx, pal, now);
         self.draw_bug_window(ctx, pal, now);
         self.draw_downloads_window(ctx, pal, now);
     }
 
-    fn window_frame(ctx: &egui::Context, pal: Palette) -> Frame {
+    pub(super) fn window_frame(ctx: &egui::Context, pal: Palette) -> Frame {
         Frame::window(&ctx.style())
             .fill(pal.bg_window)
             .stroke(Stroke::new(1.0_f32, pal.border))
@@ -735,7 +744,8 @@ impl SimpulLauncherApp {
                         RichText::new(
                             "Tanpa telemetri. Launcher hanya mengambil daftar status dan versi \
                              yang bertanda tangan, dan hanya mengirim laporan bug saat Anda \
-                             menekan Kirim laporan.",
+                             menekan Kirim laporan. Akun bersifat opsional: bila Anda masuk, \
+                             email dan nama akun Google serta daftar sertifikat disimpan.",
                         )
                         .size(FONT_MICRO)
                         .color(pal.ink_muted),
@@ -1176,6 +1186,10 @@ impl SimpulLauncherApp {
                                 if ui.button("Pasang").clicked() {
                                     match suite::run_installer(&path) {
                                         Ok(()) => {
+                                            // Dipasang lewat launcher: daftarkan sertifikatnya.
+                                            if let Some(version) = self.guard_snap.app_update(&key).map(|u| u.version.to_string()) {
+                                                self.issue_certificate(ctx, &key, &version);
+                                            }
                                             self.guard.clear_download(&key);
                                             let text = format!(
                                                 "Installer {name} dibuka. Setelah selesai, klik Scan PC."

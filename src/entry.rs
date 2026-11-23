@@ -1,5 +1,6 @@
 // Isi bersama untuk dua program: jendela (`main.rs`) dan CLI konsol (`console.rs`).
 
+mod account;
 mod cli;
 mod icons;
 mod models;

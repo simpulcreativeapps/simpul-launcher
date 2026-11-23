@@ -78,7 +78,7 @@ fn downloads_dir() -> PathBuf {
     shared_data_dir().join("downloads")
 }
 
-fn shared_data_dir() -> PathBuf {
+pub(crate) fn shared_data_dir() -> PathBuf {
     if let Ok(custom) = std::env::var("SIMPUL_DATA_DIR") {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {
@@ -415,11 +415,11 @@ const REPORT_APP_ID: &str = "launcher";
 /// Batas atas bukti kerja yang mau dikerjakan aplikasi (2^26 hash, beberapa detik).
 const REPORT_MAX_POW_BITS: u32 = 26;
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn sha256_bytes(data: &[u8]) -> Vec<u8> {
+pub(crate) fn sha256_bytes(data: &[u8]) -> Vec<u8> {
     use sha2::{Digest, Sha256};
     Sha256::digest(data).to_vec()
 }
@@ -432,7 +432,7 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
 
 /// Kunci pemasangan: 32 byte acak di folder data bersama. Hanya dipakai untuk
 /// menandatangani laporan, supaya penerima bisa membatasi kiriman per pemasangan.
-fn install_signing_key() -> Result<ed25519_dalek::SigningKey, String> {
+pub(crate) fn install_signing_key() -> Result<ed25519_dalek::SigningKey, String> {
     let path = shared_data_dir().join("install.key");
     if let Ok(text) = std::fs::read_to_string(&path) {
         let text = text.trim();

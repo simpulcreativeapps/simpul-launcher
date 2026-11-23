@@ -28,6 +28,7 @@ use crate::registry::{
 };
 use crate::suite::{self, GuardHub, GuardSnapshot};
 
+mod account_ui;
 mod suite_ui;
 
 /// Hero selalu berlatar gelap di semua tema, jadi tintanya tetap.
@@ -471,6 +472,16 @@ pub struct SimpulLauncherApp {
     bug_include_log: bool,
     /// Hasil kiriman laporan yang sedang berjalan di thread latar.
     bug_send: Option<std::sync::Arc<std::sync::Mutex<Option<Result<u64, String>>>>>,
+    /// Akun Simpul yang sedang masuk (opsional).
+    account: Option<crate::account::Account>,
+    account_open: bool,
+    certs_loaded: bool,
+    account_confirm_delete: bool,
+    account_task: Option<account_ui::AccountSlot>,
+    account_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    account_busy: &'static str,
+    /// Hasil pemeriksaan sertifikat per id aplikasi (dan `launcher`).
+    cert_cache: std::collections::BTreeMap<String, crate::account::CertificateStatus>,
     /// Unduhan pembaruan wajib sudah dimulai otomatis.
     update_started: bool,
     /// Pengguna memilih lanjut sekali ini setelah unduhan gagal.
@@ -559,6 +570,14 @@ impl SimpulLauncherApp {
             bug_text: String::new(),
             bug_include_log: false,
             bug_send: None,
+            account: if ephemeral { None } else { crate::account::load_account() },
+            account_open: shot_view == "account",
+            certs_loaded: false,
+            account_confirm_delete: false,
+            account_task: None,
+            account_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            account_busy: "",
+            cert_cache: std::collections::BTreeMap::new(),
             update_started: false,
             update_skipped: false,
             update_preview: shot_view == "update",
@@ -1583,9 +1602,13 @@ impl SimpulLauncherApp {
                     let status_str = match &app.install_state {
                         InstallState::Installed { version, .. } => {
                             if app.has_update() {
-                                format!("v{version} terpasang • v{} tersedia", app.latest_version)
+                                format!(
+                                    "v{version} terpasang • v{} tersedia • {}",
+                                    app.latest_version,
+                                    self.certificate_label(&app.id)
+                                )
                             } else {
-                                format!("v{version} terpasang • Terbaru")
+                                format!("v{version} terpasang • Terbaru • {}", self.certificate_label(&app.id))
                             }
                         }
                         InstallState::NotInstalled => {
