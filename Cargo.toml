@@ -6,6 +6,7 @@ description = "Simpul Creative Launcher: pasang, perbarui, dan buka aplikasi Sim
 homepage = "https://simpulproject.com"
 repository = "https://github.com/simpulcreativeapps/simpul-launcher"
 rust-version = "1.85"
+license = "MIT OR Apache-2.0"
 
 default-run = "simpul-creative-launcher"
 

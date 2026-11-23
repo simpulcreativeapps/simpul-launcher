@@ -54,3 +54,5 @@ Launcher membaca [`simpul-manifest`](https://github.com/simpulcreativeapps/simpu
 ## Kredit dan lisensi
 
 Simpul Creative Launcher dibuat oleh [Simpul Project](https://simpulproject.com) dan merupakan karya turunan dari [ArtCraft Launcher](https://github.com/storytold/craft-launcher) (MIT atau Apache-2.0, © 2026 ArtCraft Team dan kontributor). Lihat [`NOTICE`](NOTICE) dan folder [`licenses/`](licenses/). Produk ini tidak berafiliasi dengan ArtCraft Team.
+
+Kode Simpul Creative Launcher dilisensikan di bawah [MIT](LICENSE-MIT) atau [Apache-2.0](LICENSE-APACHE), sesuai pilihan Anda. Nama dan logo Simpul milik Simpul Project dan tidak termasuk lisensi kode.
