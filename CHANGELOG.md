@@ -6,13 +6,11 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
-### Ditambahkan
-- Lisensi untuk kode Simpul: MIT atau Apache-2.0 sesuai pilihan pengguna, sama dengan
-  kode asalnya (`LICENSE-MIT`, `LICENSE-APACHE`, dan `license` di `Cargo.toml`).
-
 ## [1.5.1] - 2026-11-23
 
 ### Ditambahkan
+- Lisensi untuk kode Simpul: MIT atau Apache-2.0 sesuai pilihan pengguna, sama dengan
+  kode asalnya (`LICENSE-MIT`, `LICENSE-APACHE`, dan `license` di `Cargo.toml`).
 - Bilah judul jendela Windows mengikuti warna tema (Windows 11; di Windows 10 hanya
   berganti gelap atau terang).
 
