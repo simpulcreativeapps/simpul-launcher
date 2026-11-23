@@ -6,6 +6,22 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.2.0] - 2026-11-23
+
+### Keamanan
+- Kirim laporan memakai protokol bertanda tangan (penerima `simpul-lapor` v2):
+  tantangan sekali pakai, bukti kerja, dan tanda tangan Ed25519 dari kunci pemasangan
+  atas tantangan dan isi laporan. Kiriman polos dari alat lain, isi yang diubah di
+  jalan, dan kiriman yang diputar ulang ditolak penerima.
+- Jawaban penerima wajib bertanda tangan Ed25519 dengan kunci publik yang ditanam di
+  aplikasi; jawaban tanpa tanda tangan sah dianggap gagal.
+- Sambungan hanya HTTPS dan tidak mengikuti pengalihan.
+- Log dikirim sebagai bagian terpisah dan hanya diterima bila berbentuk log aplikasi.
+
+### Ditambahkan
+- Kunci pemasangan acak `install.key` di folder data bersama, dibuat saat laporan
+  pertama dikirim. Tidak memuat identitas pengguna.
+
 ## [1.1.0] - 2026-11-23
 
 ### Ditambahkan

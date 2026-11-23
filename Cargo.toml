@@ -1,6 +1,6 @@
 [package]
 name = "simpul-creative-launcher"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Simpul Creative Launcher: pasang, perbarui, dan buka aplikasi Simpul Creative Apps"
 homepage = "https://simpulproject.com"
@@ -18,7 +18,10 @@ name = "simpul-creative-launcher-cli"
 path = "src/console.rs"
 
 [dependencies]
+base64 = "0.23"
+ed25519-dalek = "3"
 eframe = "0.31"
+getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 serde = { version = "1.0", features = ["derive"] }

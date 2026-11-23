@@ -44,7 +44,7 @@ cargo run -- --screenshot ./shots/now.png
 - **Donasi**: tombol *Donasi* membuka halaman Saweria di browser setelah konfirmasi. Donasi bersifat sukarela; semua aplikasi tetap gratis. Pengguna yang menyatakan sudah berdonasi mendapat lencana "You are awesome" di layar pembuka. Penanda ini disimpan lokal dan tidak diverifikasi.
 - **Laporkan bug**: membuka aplikasi email dengan laporan yang sudah diisi. Tidak ada yang terkirim sebelum pengguna menekan Kirim.
 - **Log diagnostik**: mati secara bawaan. Kalau diizinkan, kejadian ringkas dicatat ke file lokal tanpa nama akun, dan hanya ikut laporan bug kalau pengguna mencentangnya. Mematikan izin menghapus log.
-- **Tanpa telemetri**: akses internet hanya untuk mengambil manifest bertanda tangan dari `simpul-manifest`, dan atas tindakan pengguna: mengunduh installer yang sha256-nya dicek, serta mengirim laporan bug saat tombol **Kirim laporan** ditekan. Laporan berisi nama aplikasi, versi, sistem operasi, dan tulisan pengguna; log hanya ikut bila dicentang. Tidak ada nama, email, atau alamat IP yang disimpan.
+- **Tanpa telemetri**: akses internet hanya untuk mengambil manifest bertanda tangan dari `simpul-manifest`, dan atas tindakan pengguna: mengunduh installer yang sha256-nya dicek, serta mengirim laporan bug saat tombol **Kirim laporan** ditekan. Laporan berisi nama aplikasi, versi, sistem operasi, dan tulisan pengguna; log hanya ikut bila dicentang. Tidak ada nama, email, atau alamat IP yang disimpan. Laporan ditandatangani dengan kunci pemasangan acak (`install.key`, dibuat di komputer pengguna dan tidak memuat identitas) supaya penerima bisa menolak kiriman palsu dan membatasi jumlahnya; jawaban penerima juga harus bertanda tangan sah.
 
 ## Status dan pembaruan
 

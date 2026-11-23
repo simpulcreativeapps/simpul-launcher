@@ -880,17 +880,18 @@ impl SimpulLauncherApp {
                     .fill(pal.accent);
                     if ui
                         .add_enabled(!sending && self.bug_text.trim().chars().count() >= 5, send)
-                        .on_hover_text("Mengirim isi di atas langsung ke tim Simpul")
+                        .on_hover_text("Mengirim isi di atas langsung ke tim Simpul, bertanda tangan")
                         .clicked()
                     {
                         let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
                         self.bug_send = Some(slot.clone());
-                        let text = description.clone();
+                        let text = self.bug_text.clone();
+                        let log = self.bug_include_log.then(|| suite::log_tail(15, 500));
                         let repaint = ctx.clone();
                         let spawned = std::thread::Builder::new()
                             .name("simpul-lapor".into())
                             .spawn(move || {
-                                let result = suite::send_report(&text);
+                                let result = suite::send_report(&text, log.as_deref());
                                 if let Ok(mut guard) = slot.lock() {
                                     *guard = Some(result);
                                 }

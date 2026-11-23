@@ -375,43 +375,215 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
-/// Penerima laporan Simpul (Cloudflare Worker, repo `simpul-lapor`). Tidak ada rahasia di
-/// sini: penerima yang memegang token dan membatasi jumlah kiriman.
-pub const REPORT_URL: &str = "https://simpul-lapor.simpul-lapor.workers.dev/v1/report";
+// ---------------------------------------------------------------- kirim laporan (v2)
+//
+// Protokol bertanda tangan, lihat repo `simpul-lapor`:
+//   1. Aplikasi meminta tantangan sekali pakai. Jawaban server harus bertanda tangan
+//      Ed25519 dengan kunci publik yang ditanam di bawah; kalau tidak, ditolak.
+//   2. Aplikasi mengerjakan bukti kerja atas tantangan itu.
+//   3. Aplikasi menandatangani tantangan + bukti kerja + sha256 isi dengan kunci
+//      pemasangan (dibuat acak di komputer ini, tidak memuat identitas apa pun).
+// Tidak ada rahasia bersama di kode ini: yang ditanam hanya kunci publik server.
+
+const REPORT_BASE: &str = "https://simpul-lapor.simpul-lapor.workers.dev";
+const REPORT_SERVER_KEY_B64: &str = "9b37rE52vJMf0fhN9pxlnT7xJxfL1NLNXbWCrQ8i2/Q=";
 const REPORT_APP_ID: &str = "launcher";
+/// Batas atas bukti kerja yang mau dikerjakan aplikasi (2^26 hash, beberapa detik).
+const REPORT_MAX_POW_BITS: u32 = 26;
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sha256_bytes(data: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data).to_vec()
+}
+
+fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
+    let mut buf = [0u8; N];
+    getrandom::fill(&mut buf).map_err(|_| "sumber acak sistem tidak tersedia".to_string())?;
+    Ok(buf)
+}
+
+/// Kunci pemasangan: 32 byte acak di folder data bersama. Hanya dipakai untuk
+/// menandatangani laporan, supaya penerima bisa membatasi kiriman per pemasangan.
+fn install_signing_key() -> Result<ed25519_dalek::SigningKey, String> {
+    let path = shared_data_dir().join("install.key");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let text = text.trim();
+        if text.len() == 64 {
+            let mut seed = [0u8; 32];
+            let parsed = (0..32).all(|i| {
+                u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).map(|b| seed[i] = b).is_ok()
+            });
+            if parsed {
+                return Ok(ed25519_dalek::SigningKey::from_bytes(&seed));
+            }
+        }
+    }
+    let seed = random_bytes::<32>()?;
+    std::fs::create_dir_all(shared_data_dir()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, hex(&seed)).map_err(|e| e.to_string())?;
+    Ok(ed25519_dalek::SigningKey::from_bytes(&seed))
+}
+
+/// Jawaban server hanya dipercaya bila tanda tangannya cocok dengan kunci yang ditanam.
+fn verify_server_reply(context: &str, status: u16, body: &str, signature_b64: &str) -> Result<(), String> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let bad = || "jawaban penerima tidak bertanda tangan sah".to_string();
+    let key: [u8; 32] = b64
+        .decode(REPORT_SERVER_KEY_B64)
+        .ok()
+        .and_then(|k| k.try_into().ok())
+        .ok_or_else(bad)?;
+    let sig: [u8; 64] = b64
+        .decode(signature_b64.trim())
+        .ok()
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(bad)?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| bad())?;
+    let message = format!("simpul-response-v2\n{context}\n{status}\n{body}");
+    key.verify_strict(message.as_bytes(), &ed25519_dalek::Signature::from_bytes(&sig))
+        .map_err(|_| bad())
+}
+
+fn leading_zero_bits(bytes: &[u8]) -> u32 {
+    let mut bits = 0;
+    for b in bytes {
+        if *b == 0 {
+            bits += 8;
+        } else {
+            bits += b.leading_zeros();
+            break;
+        }
+    }
+    bits
+}
+
+fn solve_proof_of_work(challenge: &str, bits: u32) -> Result<String, String> {
+    if bits > REPORT_MAX_POW_BITS {
+        return Err("penerima meminta bukti kerja yang tidak wajar".to_string());
+    }
+    for nonce in 0u64..(1u64 << 34) {
+        let digest = sha256_bytes(format!("{challenge}:{nonce}").as_bytes());
+        if leading_zero_bits(&digest) >= bits {
+            return Ok(nonce.to_string());
+        }
+    }
+    Err("bukti kerja tidak selesai".to_string())
+}
+
+/// Satu permintaan POST yang jawabannya wajib bertanda tangan server.
+fn signed_post(
+    client: &reqwest::blocking::Client,
+    path: &str,
+    context: &str,
+    headers: &[(&str, String)],
+    body: String,
+) -> Result<(u16, serde_json::Value), String> {
+    let mut request = client.post(format!("{REPORT_BASE}{path}")).body(body);
+    for (name, value) in headers {
+        request = request.header(*name, value);
+    }
+    let response = request
+        .send()
+        .map_err(|_| "tidak bisa terhubung ke penerima laporan".to_string())?;
+    let status = response.status().as_u16();
+    let signature = response
+        .headers()
+        .get("x-simpul-server-sig")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let text = response.text().unwrap_or_default();
+    verify_server_reply(context, status, &text, &signature)?;
+    Ok((status, serde_json::from_str(&text).unwrap_or_default()))
+}
+
+fn reply_error(status: u16, value: &serde_json::Value) -> String {
+    value
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| format!("penerima menjawab {status}"), str::to_string)
+}
 
 /// Kirim satu laporan. Hanya dipanggil saat pengguna menekan "Kirim laporan"; isinya
 /// sama dengan yang ditampilkan di jendela laporan. Mengembalikan nomor laporan.
-pub fn send_report(description: &str) -> Result<u64, String> {
-    let payload = serde_json::json!({
+pub fn send_report(description: &str, log: Option<&str>) -> Result<u64, String> {
+    use base64::Engine;
+    use ed25519_dalek::Signer;
+    let b64 = base64::engine::general_purpose::STANDARD;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(format!("simpul-launcher/{LAUNCHER_VERSION}"))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 1. Tantangan sekali pakai.
+    let nonce = hex(&random_bytes::<16>()?);
+    let (status, value) = signed_post(
+        &client,
+        "/v2/challenge",
+        &nonce,
+        &[("x-simpul-nonce", nonce.clone())],
+        String::new(),
+    )?;
+    if status != 200 {
+        return Err(reply_error(status, &value));
+    }
+    let challenge = value
+        .get("challenge")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("penerima tidak memberi tantangan")?
+        .to_string();
+    let bits = value.get("bits").and_then(serde_json::Value::as_u64).unwrap_or(0) as u32;
+
+    // 2. Bukti kerja.
+    let pow = solve_proof_of_work(&challenge, bits)?;
+
+    // 3. Isi dan tanda tangan kunci pemasangan.
+    let mut payload = serde_json::json!({
         "app": REPORT_APP_ID,
         "version": LAUNCHER_VERSION,
         "os": os_label(),
         "kind": "bug",
         "description": description.trim(),
     });
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .user_agent(format!("simpul-launcher/{LAUNCHER_VERSION}"))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let response = client
-        .post(REPORT_URL)
-        .header("content-type", "application/json")
-        .header("x-simpul-client", "1")
-        .body(payload.to_string())
-        .send()
-        .map_err(|_| "tidak bisa terhubung ke penerima laporan".to_string())?;
-    let status = response.status();
-    let value: serde_json::Value =
-        serde_json::from_str(&response.text().unwrap_or_default()).unwrap_or_default();
-    if status.is_success() && value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+    if let Some(log) = log.filter(|l| !l.trim().is_empty()) {
+        // Baris log dipotong supaya tetap berbentuk log aplikasi yang diterima penerima.
+        let trimmed: Vec<String> =
+            log.lines().map(|l| l.chars().take(300).collect::<String>()).collect();
+        payload["log"] = serde_json::Value::String(trimmed.join("\n"));
+    }
+    let body = payload.to_string();
+    let key = install_signing_key()?;
+    let message = format!(
+        "simpul-report-v2\n{challenge}\n{pow}\n{}",
+        hex(&sha256_bytes(body.as_bytes()))
+    );
+    let signature = key.sign(message.as_bytes());
+    let (status, value) = signed_post(
+        &client,
+        "/v2/report",
+        &challenge,
+        &[
+            ("content-type", "application/json".to_string()),
+            ("x-simpul-challenge", challenge.clone()),
+            ("x-simpul-pow", pow),
+            ("x-simpul-key", b64.encode(key.verifying_key().to_bytes())),
+            ("x-simpul-sig", b64.encode(signature.to_bytes())),
+        ],
+        body,
+    )?;
+    if status == 200 && value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         Ok(value.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0))
     } else {
-        Err(value
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .map_or_else(|| format!("penerima menjawab {}", status.as_u16()), str::to_string))
+        Err(reply_error(status, &value))
     }
 }
 
@@ -590,6 +762,22 @@ mod tests {
         assert_eq!(launcher_id_for("sync"), "simpulsync-4");
         assert_eq!(manifest_id_for("video"), "video");
         assert_eq!(launcher_id_for(manifest_id_for("design")), "design");
+    }
+
+    #[test]
+    fn forged_server_reply_is_rejected() {
+        // Tanda tangan sembarang, kosong, atau untuk isi lain tidak boleh diterima.
+        let fake = "A".repeat(86) + "==";
+        assert!(verify_server_reply("x", 200, "{\"ok\":true}", &fake).is_err());
+        assert!(verify_server_reply("x", 200, "{\"ok\":true}", "").is_err());
+    }
+
+    #[test]
+    fn proof_of_work_meets_requested_bits() {
+        let nonce = solve_proof_of_work("tantangan-uji", 10).unwrap();
+        let digest = sha256_bytes(format!("tantangan-uji:{nonce}").as_bytes());
+        assert!(leading_zero_bits(&digest) >= 10);
+        assert!(solve_proof_of_work("x", 40).is_err());
     }
 
     #[test]
