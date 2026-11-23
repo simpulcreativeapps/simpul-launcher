@@ -2635,6 +2635,23 @@ impl eframe::App for SimpulLauncherApp {
         self.last_frame_secs = Some(now);
 
         let pal = self.apply_visuals(ctx);
+        {
+            // Bilah judul jendela mengikuti warna tema (tema kaca memakai warna padatnya).
+            let caption = if pal.bg_canvas.a() == 255 { pal.bg_canvas } else { pal.bg_window };
+            crate::titlebar::tint(
+                [caption.r(), caption.g(), caption.b()],
+                [pal.ink_primary.r(), pal.ink_primary.g(), pal.ink_primary.b()],
+                pal.dark,
+            );
+        }
+        if pal.bg_canvas.a() == 255 {
+            // Dasar jendela ikut warna tema supaya celah antarpanel tidak tampak gelap.
+            ctx.layer_painter(egui::LayerId::background()).rect_filled(
+                ctx.screen_rect(),
+                0.0,
+                pal.bg_canvas,
+            );
+        }
         self.paint_glass_backdrop(ctx);
         self.handle_zoom_shortcuts(ctx);
         self.poll_external_cli_changes(now);
@@ -2665,6 +2682,7 @@ impl eframe::App for SimpulLauncherApp {
         egui::SidePanel::left("simpul_sidebar")
             .exact_width(shell_ui::SIDEBAR_WIDTH)
             .resizable(false)
+            .show_separator_line(false)
             .frame(
                 Frame::new()
                     .fill(pal.bg_header)

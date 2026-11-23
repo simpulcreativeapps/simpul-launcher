@@ -2,7 +2,7 @@
 ; Single-file installer, tanpa admin (per-user), pasang ke %LOCALAPPDATA%\Programs\Simpul Creative Launcher.
 
 #ifndef AppVersion
-  #define AppVersion "1.5.0"
+  #define AppVersion "1.5.1"
 #endif
 #ifndef Root
   #define Root ".."

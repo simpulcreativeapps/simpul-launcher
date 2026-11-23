@@ -6,6 +6,7 @@ mod icons;
 mod models;
 mod registry;
 mod suite;
+mod titlebar;
 mod ui;
 
 use std::env;

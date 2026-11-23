@@ -6,6 +6,15 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.5.1] - 2026-11-23
+
+### Ditambahkan
+- Bilah judul jendela Windows mengikuti warna tema (Windows 11; di Windows 10 hanya
+  berganti gelap atau terang).
+
+### Diperbaiki
+- Garis gelap di antara bilah samping dan isi jendela pada tema terang.
+
 ## [1.5.0] - 2026-11-23
 
 Tata letak dibangun ulang mengikuti rancangan acuan dari pemilik proyek.
