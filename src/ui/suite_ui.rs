@@ -407,6 +407,8 @@ impl SimpulLauncherApp {
             .clicked()
         {
             self.about_open = true;
+            self.bug_open = false;
+            self.donate_open = false;
         }
         if ui
             .add(
@@ -430,6 +432,9 @@ impl SimpulLauncherApp {
         self.donate_agree = false;
         self.donate_sent = false;
         self.donate_open = true;
+        // Satu jendela saja yang terbuka supaya tidak saling menutupi.
+        self.about_open = false;
+        self.bug_open = false;
     }
 
     /// Jendela Tentang, donasi, dan daftar unduhan aplikasi.
@@ -590,6 +595,7 @@ impl SimpulLauncherApp {
         if want_bug {
             self.bug_include_log = false;
             self.bug_open = true;
+            open = false;
         }
         if want_donate {
             self.open_donate();
@@ -845,12 +851,25 @@ impl SimpulLauncherApp {
                     {
                         let link =
                             suite::bug_report_mailto(LAUNCHER_NAME, LAUNCHER_VERSION, &description);
-                        ctx.open_url(egui::OpenUrl::new_tab(link));
-                        self.push_toast(
-                            now,
-                            "Aplikasi email dibuka. Tekan Kirim di sana untuk mengirim laporan.",
-                            false,
-                        );
+                        // Isi selalu ikut disalin: kalau komputer ini tidak punya aplikasi
+                        // email, pengguna tinggal menempelkannya ke email apa pun.
+                        ctx.copy_text(body.clone());
+                        match suite::open_with_system(&link) {
+                            Ok(()) => self.push_toast(
+                                now,
+                                format!(
+                                    "Aplikasi email dibuka. Kalau tidak muncul, isi laporan sudah disalin: tempel ke email untuk {CONTACT_EMAIL}."
+                                ),
+                                false,
+                            ),
+                            Err(_) => self.push_toast(
+                                now,
+                                format!(
+                                    "Aplikasi email tidak bisa dibuka. Isi laporan sudah disalin: tempel ke email untuk {CONTACT_EMAIL}."
+                                ),
+                                true,
+                            ),
+                        }
                         self.bug_text.clear();
                         close = true;
                     }

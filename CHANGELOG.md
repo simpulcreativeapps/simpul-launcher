@@ -6,6 +6,39 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.0.1] - 2026-11-23
+
+Hasil uji langsung pada launcher yang terpasang dari installer 1.0.0.
+
+### Diperbaiki
+- Jendela terminal hitam tidak lagi ikut terbuka saat launcher dijalankan dari Start menu.
+  Perintah CLI tetap mencetak keluarannya ke terminal pemanggil.
+- Layar pembuka tampil sekitar 1,8 detik (sebelumnya 0,8 detik), dan sedikit lebih lama
+  untuk pendukung, supaya lencana "You are awesome" sempat terbaca.
+- **Kirim lewat email** memakai pengendali email sistem operasi, dan isi laporan selalu
+  ikut disalin. Bila tidak ada aplikasi email, pengguna diberi tahu dan tinggal menempel.
+- Uninstaller mengeluarkan lagi folder launcher dari PATH pengguna.
+- Impor aplikasi memakai versi dari manifest; isian Versi boleh dikosongkan.
+- Impor lewat formulir tercatat sebagai "Manual", bukan sebagai agen Claude.
+- Tentang, Donasi, dan Laporkan bug tidak lagi terbuka bertumpuk.
+
+### Diubah
+- Label "Rilis" pada jenis build menjadi "Build rilis" agar tidak terbaca sebagai
+  "sudah dirilis resmi".
+- Teks yang masih berbahasa Inggris diterjemahkan: panel Detail, judul kolom Tabel,
+  dialog hapus instalasi, pesan impor, pindai, antrean, dan catatan aktivitas.
+  Keterangan aplikasi terdeteksi yang tersimpan dari 1.0.0 ikut diperbarui (registry v3).
+- Tema yang dipilih disimpan juga ke `theme.json` di folder data bersama, sehingga
+  aplikasi Simpul lain memakai tema yang sama, dan sebaliknya.
+- `--version` dan teks bantuan CLI mengambil nomor versi dari satu sumber.
+- Installer menyertakan `CHANGELOG.md`, `NOTICE`, dan teks lisensi di folder `docs`.
+
+### Ditambahkan
+- Program CLI terpisah `simpul-creative-launcher-cli.exe` (subsistem konsol) untuk terminal
+  dan agen, supaya keluarannya sampai ke terminal, pipa, atau berkas dari shell mana pun.
+  `simpul-creative-launcher` di PATH sekarang menjalankan program ini; perintah yang
+  ditampilkan di panel "CLI & agen" juga menunjuk ke sana.
+
 ### Ditambahkan
 - Pengaturan **Kurangi transparansi**: tema Liquid Glass memakai panel padat tanpa latar cahaya.
 - Tes otomatis kontras komponen 3:1 (tepi kontrol, cincin fokus, tombol terpilih).

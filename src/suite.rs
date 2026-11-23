@@ -375,6 +375,42 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
+/// Buka tautan (mis. `mailto:`) lewat pengendali bawaan sistem operasi.
+pub fn open_with_system(link: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let spawned = Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", link])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = Command::new("open").arg(link).spawn();
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let spawned = Command::new("xdg-open").arg(link).spawn();
+    spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------- tema bersama
+
+/// Tema dibagi ke semua aplikasi Simpul lewat `theme.json` di folder data bersama.
+pub fn save_shared_theme(theme: &impl serde::Serialize, reduce_transparency: bool) {
+    let dir = shared_data_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let value = serde_json::json!({ "theme": theme, "reduce_transparency": reduce_transparency });
+    let _ = std::fs::write(dir.join("theme.json"), value.to_string());
+}
+
+pub fn load_shared_theme<T: serde::de::DeserializeOwned>() -> Option<(T, bool)> {
+    let raw = std::fs::read_to_string(shared_data_dir().join("theme.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let theme = serde_json::from_value::<T>(value.get("theme")?.clone()).ok()?;
+    let reduce = value
+        .get("reduce_transparency")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    Some((theme, reduce))
+}
+
 /// Batas isi laporan supaya tautan `mailto:` tetap diterima aplikasi email.
 pub const BUG_REPORT_MAX_CHARS: usize = 1200;
 

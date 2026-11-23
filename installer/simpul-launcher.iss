@@ -2,7 +2,7 @@
 ; Single-file installer, tanpa admin (per-user), pasang ke %LOCALAPPDATA%\Programs\Simpul Creative Launcher.
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 #ifndef Root
   #define Root ".."
@@ -49,12 +49,16 @@ Name: "addpath"; Description: "Tambahkan CLI ke User PATH (untuk Claude, Antigra
 
 [Files]
 Source: "{#Exe}"; DestDir: "{app}"; DestName: "Simpul Creative Launcher.exe"; Flags: ignoreversion
+Source: "{#Root}\target\release\simpul-creative-launcher-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\installer\simpul-creative-launcher.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\assets\simpul-launcher.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#Root}\assets\simpul-icon.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#Root}\assets\simpul-splash.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#Root}\assets\simpul-hero-banner.png"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#Root}\README.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#Root}\CHANGELOG.md"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#Root}\NOTICE"; DestDir: "{app}\docs"; Flags: ignoreversion
+Source: "{#Root}\licenses\*"; DestDir: "{app}\docs\licenses"; Flags: ignoreversion recursesubdirs
 Source: "{#Root}\CLAUDE.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "{#Root}\examples\*"; DestDir: "{app}\examples"; Flags: ignoreversion recursesubdirs
 
@@ -81,4 +85,31 @@ begin
     exit;
   end;
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+{ Saat dicopot, folder aplikasi dikeluarkan lagi dari PATH pengguna. }
+procedure RemoveFromUserPath(Dir: string);
+var
+  OrigPath, Padded, Needle: string;
+  P: Integer;
+begin
+  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', OrigPath) then
+    exit;
+  Padded := ';' + OrigPath + ';';
+  Needle := ';' + Uppercase(Dir) + ';';
+  P := Pos(Needle, Uppercase(Padded));
+  if P = 0 then
+    exit;
+  Delete(Padded, P, Length(Needle) - 1);
+  if (Length(Padded) > 0) and (Padded[1] = ';') then
+    Delete(Padded, 1, 1);
+  if (Length(Padded) > 0) and (Padded[Length(Padded)] = ';') then
+    Delete(Padded, Length(Padded), 1);
+  RegWriteExpandStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Padded);
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    RemoveFromUserPath(ExpandConstant('{app}'));
 end;

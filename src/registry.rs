@@ -51,7 +51,7 @@ pub fn now_label() -> String {
 }
 
 /// Versi 2: katalog mengikuti manifest; entri contoh bawaan versi 1 dibuang.
-pub const REGISTRY_VERSION: u32 = 2;
+pub const REGISTRY_VERSION: u32 = 3;
 
 /// Buang entri contoh dari registry versi lama. Aplikasi yang terpasang dan yang diimpor
 /// pengguna atau agen tetap dipertahankan.
@@ -59,10 +59,40 @@ fn migrate_registry(reg: &mut SimpulRegistry) -> bool {
     if reg.version >= REGISTRY_VERSION {
         return false;
     }
-    reg.apps
-        .retain(|a| a.install_state.is_installed() || a.origin != AgentOrigin::SimpulSuite);
-    let kept: Vec<String> = reg.apps.iter().map(|a| a.id.clone()).collect();
-    reg.events.retain(|e| kept.contains(&e.app_id));
+    if reg.version < 2 {
+        reg.apps
+            .retain(|a| a.install_state.is_installed() || a.origin != AgentOrigin::SimpulSuite);
+        let kept: Vec<String> = reg.apps.iter().map(|a| a.id.clone()).collect();
+        reg.events.retain(|e| kept.contains(&e.app_id));
+    }
+    if reg.version < 3 {
+        // Versi 1.0.0 menyimpan keterangan aplikasi terdeteksi dalam bahasa Inggris.
+        for app in &mut reg.apps {
+            let auto_detected = app
+                .features
+                .first()
+                .is_some_and(|f| f.title == "Auto-Detected Local Install");
+            if !auto_detected {
+                continue;
+            }
+            let exe = app.artifact_path.clone().unwrap_or_default();
+            app.headline = format!(
+                "{} v{} siap dibuka langsung dari Simpul Creative Launcher.",
+                app.name, app.latest_version
+            );
+            app.about = format!(
+                "{} ditemukan otomatis di komputer ini pada {} dan ditautkan supaya bisa dibuka sekali klik.",
+                app.name, exe
+            );
+            app.released_date = "terdeteksi".to_string();
+            app.features = vec![AppFeature {
+                title: "Terdeteksi otomatis".to_string(),
+                description: format!("Ditautkan langsung ke {exe}."),
+            }];
+            app.release_notes =
+                vec![format!("v{}: terdeteksi otomatis di komputer ini.", app.latest_version)];
+        }
+    }
     reg.version = REGISTRY_VERSION;
     true
 }
@@ -139,8 +169,16 @@ pub fn registry_mtime() -> Option<SystemTime> {
 pub fn detect_integrations(settings: &LauncherSettings) -> ToolIntegrationStatus {
     let (agy_detected, agy_path) = find_on_path(&settings.agy_command);
     let (claude_detected, claude_path) = find_on_path(&settings.claude_command);
+    // Perintah untuk agen menunjuk program CLI di sebelah program jendela bila ada.
     let cli_self_path = env::current_exe()
-        .map(|p| p.display().to_string())
+        .map(|p| {
+            p.parent()
+                .map(|d| d.join("simpul-creative-launcher-cli.exe"))
+                .filter(|cli| cli.exists())
+                .unwrap_or(p)
+                .display()
+                .to_string()
+        })
         .unwrap_or_else(|_| "simpul-creative-launcher".to_string());
     ToolIntegrationStatus {
         agy_detected,
@@ -382,7 +420,7 @@ pub fn import_into_registry(
         .or_else(|| manifest.as_ref().and_then(|m| m.tagline.clone()))
         .unwrap_or_else(|| {
             format!(
-                "Imported via {} — verified {} package",
+                "Diimpor lewat {}, paket {} terverifikasi",
                 req.agent.label(),
                 profile.short_label()
             )
@@ -398,7 +436,7 @@ pub fn import_into_registry(
         .and_then(|m| m.about.clone())
         .unwrap_or_else(|| {
             format!(
-                "{} was imported into Simpul Creative Launcher through {} and validated for deployment.",
+                "{} diimpor ke Simpul Creative Launcher lewat {} dan sudah divalidasi.",
                 derived_name,
                 req.agent.label()
             )
@@ -463,8 +501,8 @@ pub fn import_into_registry(
         artifact_path: Some(resolved_artifact.display().to_string()),
         features: vec![
             AppFeature {
-                title: "Deploy-Ready Package".to_string(),
-                description: format!("Verified {} artifact with SHA-256 integrity receipt.", profile.short_label()),
+                title: "Paket siap pakai".to_string(),
+                description: format!("Berkas {} terverifikasi dengan tanda terima SHA-256.", profile.short_label()),
             },
             AppFeature {
                 title: "CLI, Claude & agy Managed".to_string(),
@@ -472,7 +510,7 @@ pub fn import_into_registry(
             },
         ],
         release_notes: vec![format!(
-            "v{version} — Imported via {} ({})",
+            "v{version}: diimpor lewat {} ({})",
             req.agent.label(),
             now_label()
         )],
@@ -497,7 +535,7 @@ pub fn import_into_registry(
             action: "import".to_string(),
             app_id: id.clone(),
             summary: format!(
-                "{} imported {} v{} ({})",
+                "{} mengimpor {} v{} ({})",
                 req.agent.label(),
                 derived_name,
                 version,
@@ -597,7 +635,7 @@ pub fn install_in_registry(
             action: "install".to_string(),
             app_id: updated.id.clone(),
             summary: format!(
-                "{} installed {} v{} to {}",
+                "{} memasang {} v{} ke {}",
                 actor.label(),
                 updated.name,
                 version,
@@ -635,7 +673,7 @@ pub fn uninstall_in_registry(
             actor,
             action: "uninstall".to_string(),
             app_id: slug,
-            summary: format!("{} removed {}", actor.label(), name),
+            summary: format!("{} menghapus {}", actor.label(), name),
         },
     );
     reg.events.truncate(40);
@@ -1114,14 +1152,14 @@ pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
                 id: found.id.clone(),
                 name: found.name.clone(),
                 tagline: format!("Aplikasi Simpul yang terpasang, ditemukan lewat {}", found.source_label),
-                headline: format!("{} v{} ready to launch directly from Simpul Creative Launcher.", found.name, found.version),
+                headline: format!("{} v{} siap dibuka langsung dari Simpul Creative Launcher.", found.name, found.version),
                 about: format!(
-                    "{} was automatically discovered on this PC at {} and linked for one-click launch.",
+                    "{} ditemukan otomatis di komputer ini pada {} dan ditautkan supaya bisa dibuka sekali klik.",
                     found.name, exe_str
                 ),
                 category: "Terpasang di komputer ini".to_string(),
                 latest_version: found.version.clone(),
-                released_date: "Detected".to_string(),
+                released_date: "terdeteksi".to_string(),
                 download_size_mb: real_size_mb.unwrap_or(16.0),
                 sha256: compute_sha256_short(&found.exe_path),
                 profile: BuildProfile::Release,
@@ -1135,11 +1173,11 @@ pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
                 workspace_path: Some(dir_str),
                 artifact_path: Some(exe_str.clone()),
                 features: vec![AppFeature {
-                    title: "Auto-Detected Local Install".to_string(),
-                    description: format!("Linked directly to {}.", exe_str),
+                    title: "Terdeteksi otomatis".to_string(),
+                    description: format!("Ditautkan langsung ke {}.", exe_str),
                 }],
                 release_notes: vec![format!(
-                    "v{} — Automatically detected from {}.",
+                    "v{}: terdeteksi otomatis dari {}.",
                     found.version, found.source_label
                 )],
                 install_state: InstallState::Installed {
@@ -1183,7 +1221,7 @@ pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
     }
 
     if !updated_names.is_empty() {
-        reg.last_checked_label = format!("Scanned PC • {}", now_label());
+        reg.last_checked_label = format!("Dipindai {}", now_label());
     }
     updated_names
 }
@@ -1273,7 +1311,7 @@ pub fn set_app_executable_path(
     reg.apps[idx].install_state = InstallState::Installed {
         version: ver,
         install_path: exe_str.clone(),
-        installed_at: format!("Linked {}", now_label()),
+        installed_at: format!("Ditautkan {}", now_label()),
     };
     reg.apps[idx].artifact_path = Some(exe_str.clone());
     reg.apps[idx].workspace_path = Some(dir_str);

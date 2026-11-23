@@ -45,7 +45,7 @@ pub fn parse_and_dispatch(args: &[String]) -> CliDisposition {
             CliDisposition::ExitCode(0)
         }
         "--version" | "-V" | "version" => {
-            println!("simpul-creative-launcher 1.0.0");
+            println!("simpul-creative-launcher {}", crate::suite::LAUNCHER_VERSION);
             CliDisposition::ExitCode(0)
         }
         "status" => CliDisposition::ExitCode(cmd_status(&args[1..])),
@@ -575,7 +575,7 @@ fn cmd_agent_config(_args: &[String]) -> i32 {
 
 pub fn print_help() {
     println!(
-        "Simpul Creative Launcher 1.0.0\n\
+        "Simpul Creative Launcher\n\
          Desktop launcher for deploy-ready Simpul software integrated with CLI, Antigravity (agy), and Claude.\n\
          \n\
          USAGE:\n\

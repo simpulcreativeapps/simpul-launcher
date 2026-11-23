@@ -44,7 +44,10 @@ const SIMPUL_ICON_BYTES: &[u8] = include_bytes!("../assets/simpul-icon.png");
 const SIMPUL_SPLASH_BYTES: &[u8] = include_bytes!("../assets/simpul-splash.png");
 const SIMPUL_HERO_BYTES: &[u8] = include_bytes!("../assets/simpul-hero-banner.png");
 
-const INITIAL_SPLASH_FRAMES: u32 = 48;
+/// Sekitar 1,8 detik pada layar 60 Hz; klik atau Esc melewatinya.
+const INITIAL_SPLASH_FRAMES: u32 = 110;
+/// Pendukung melihat ucapan terima kasih sedikit lebih lama.
+const SUPPORTER_SPLASH_FRAMES: u32 = 170;
 
 struct BrandTextures {
     icon: Option<TextureHandle>,
@@ -103,10 +106,10 @@ impl Default for ImportFormState {
             open: false,
             path_input: "./examples/capr-notebook.json".to_string(),
             name_input: String::new(),
-            version_input: "1.0.0".to_string(),
+            version_input: String::new(),
             tagline_input: String::new(),
             category_input: "Simpul Suite".to_string(),
-            origin: AgentOrigin::Claude,
+            origin: AgentOrigin::CliManual,
             auto_install: true,
             allow_debug_override: false,
             error_banner: None,
@@ -472,6 +475,13 @@ impl SimpulLauncherApp {
     pub fn new(ctx: &egui::Context, screenshot_target: Option<PathBuf>) -> Self {
         let ephemeral = screenshot_target.is_some();
         let mut registry = load_or_init_registry(ephemeral);
+        if !ephemeral {
+            // Tema yang dipilih di aplikasi Simpul lain ikut berlaku di sini.
+            if let Some((theme, reduce)) = suite::load_shared_theme::<ThemeChoice>() {
+                registry.settings.theme = theme;
+                registry.settings.reduce_transparency = reduce;
+            }
+        }
         if ephemeral {
             if let Some(theme) = std::env::var("SIMPUL_SHOT_THEME")
                 .ok()
@@ -492,10 +502,13 @@ impl SimpulLauncherApp {
             String::new()
         };
 
+        let supporter_now = !ephemeral && suite::is_supporter();
+        let splash_frames = if supporter_now { SUPPORTER_SPLASH_FRAMES } else { INITIAL_SPLASH_FRAMES };
+
         Self {
             textures,
-            splash_frames_left: if shot_view == "badge" { 400 } else { INITIAL_SPLASH_FRAMES },
-            splash_total_frames: if shot_view == "badge" { 800 } else { INITIAL_SPLASH_FRAMES },
+            splash_frames_left: if shot_view == "badge" { 400 } else { splash_frames },
+            splash_total_frames: if shot_view == "badge" { 800 } else { splash_frames },
             registry,
             ephemeral,
             screenshot_target,
@@ -544,6 +557,10 @@ impl SimpulLauncherApp {
         if !self.ephemeral {
             let _ = save_registry(&self.registry);
             self.last_mtime = registry_mtime();
+            suite::save_shared_theme(
+                &self.registry.settings.theme,
+                self.registry.settings.reduce_transparency,
+            );
         }
     }
 
@@ -620,7 +637,7 @@ impl SimpulLauncherApp {
         });
         self.push_toast(
             now,
-            format!("Queued {} v{} ({})", app_name, target_version, actor.label()),
+            format!("Masuk antrean: {} v{} ({})", app_name, target_version, actor.label()),
             false,
         );
     }
@@ -1224,14 +1241,14 @@ impl SimpulLauncherApp {
                                 if updated.is_empty() {
                                     self.push_toast(
                                         now,
-                                        format!("Scan selesai: {linked_cnt} aplikasi terinstall siap dibuka."),
+                                        format!("Pindai selesai: {linked_cnt} aplikasi terpasang siap dibuka."),
                                         false,
                                     );
                                 } else {
                                     self.push_toast(
                                         now,
                                         format!(
-                                            "Scan selesai: {} aplikasi diperbarui ({linked_cnt} siap dibuka).",
+                                            "Pindai selesai: {} aplikasi diperbarui ({linked_cnt} siap dibuka).",
                                             updated.len()
                                         ),
                                         false,
@@ -1307,13 +1324,13 @@ impl SimpulLauncherApp {
 
             let mut tabs = vec![
                 (FilterTab::All, format!("Semua ({total_visible})")),
-                (FilterTab::DeployReady, format!("Rilis ({deploy_cnt})")),
+                (FilterTab::DeployReady, format!("Build rilis ({deploy_cnt})")),
                 (FilterTab::Installed, format!("Terpasang ({inst_cnt})")),
                 (FilterTab::Updates, format!("Pembaruan ({upd_cnt})")),
                 (FilterTab::AgentImported, format!("Dari agen ({agent_cnt})")),
             ];
             if hidden_cnt > 0 || self.filter == FilterTab::Hidden {
-                tabs.push((FilterTab::Hidden, format!("Hidden ({hidden_cnt})")));
+                tabs.push((FilterTab::Hidden, format!("Disembunyikan ({hidden_cnt})")));
             }
 
             for (tab, label) in tabs {
@@ -1617,7 +1634,7 @@ impl SimpulLauncherApp {
                             .clicked()
                         {
                             self.queue.retain(|q| q.app_id != app.id);
-                            self.push_toast(now, format!("Cancelled {}", app.name), false);
+                            self.push_toast(now, format!("Dibatalkan: {}", app.name), false);
                         }
                     });
                 } else {
@@ -1722,7 +1739,7 @@ impl SimpulLauncherApp {
                                             app.id
                                         );
                                         ui.ctx().copy_text(cmd.clone());
-                                        self.push_toast(now, format!("Copied: {cmd}"), false);
+                                        self.push_toast(now, format!("Disalin: {cmd}"), false);
                                         ui.close_menu();
                                     }
                                     if ui.button("Opsi peluncuran…").clicked() {
@@ -1802,12 +1819,12 @@ impl SimpulLauncherApp {
                     .striped(true)
                     .show(ui, |ui| {
                         for col in [
-                            "App",
+                            "Aplikasi",
                             "Jenis build",
-                            "Origin / Agent",
-                            "Installed",
-                            "Latest",
-                            "Action",
+                            "Asal",
+                            "Terpasang",
+                            "Terbaru",
+                            "Aksi",
                         ] {
                             ui.label(
                                 RichText::new(col)
@@ -2068,7 +2085,7 @@ impl SimpulLauncherApp {
                         app.id
                     );
                     ui.ctx().copy_text(cmd.clone());
-                    self.push_toast(now, format!("Copied: {cmd}"), false);
+                    self.push_toast(now, format!("Disalin: {cmd}"), false);
                 }
             });
 
@@ -2094,7 +2111,7 @@ impl SimpulLauncherApp {
             }
             if let Some(ref exe_p) = resolved_exe {
                 ui.label(
-                    RichText::new(format!("Ready: {}", exe_p.display()))
+                    RichText::new(format!("Siap: {}", exe_p.display()))
                         .size(FONT_MICRO)
                         .monospace()
                         .color(pal.emerald),
@@ -2141,9 +2158,9 @@ impl SimpulLauncherApp {
                     self.push_toast(
                         now,
                         if updated.is_empty() {
-                            "Scan PC selesai — semua path sudah sinkron.".to_string()
+                            "Pindai selesai: semua lokasi sudah cocok.".to_string()
                         } else {
-                            format!("Scan PC selesai — {} pembaruan ditemukan.", updated.len())
+                            format!("Pindai selesai: {} pembaruan ditemukan.", updated.len())
                         },
                         false,
                     );
@@ -2160,7 +2177,7 @@ impl SimpulLauncherApp {
             ui.add_space(4.0);
             ui.label(
                 RichText::new(format!(
-                    "Format: {} • Size: {:.1} MB • Released: {}",
+                    "Format: {} • Ukuran: {:.1} MB • Rilis: {}",
                     app.package_format.label(),
                     app.download_size_mb,
                     app.released_date
@@ -2449,6 +2466,7 @@ impl SimpulLauncherApp {
                             ui.label("Versi:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.version_input)
+                                    .hint_text("otomatis dari manifest")
                                     .desired_width(140.0),
                             );
                             ui.end_row();
@@ -2525,7 +2543,7 @@ impl SimpulLauncherApp {
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         let submit_lbl = if self.import_form.auto_install {
-                            "Import & Install"
+                            "Impor & pasang"
                         } else {
                             "Impor"
                         };
@@ -2547,7 +2565,8 @@ impl SimpulLauncherApp {
                                 } else {
                                     Some(self.import_form.name_input.trim().to_string())
                                 },
-                                version: Some(self.import_form.version_input.trim().to_string()),
+                                version: Some(self.import_form.version_input.trim().to_string())
+                                    .filter(|v| !v.is_empty()),
                                 tagline: if self.import_form.tagline_input.trim().is_empty() {
                                     None
                                 } else {
@@ -2566,7 +2585,7 @@ impl SimpulLauncherApp {
                                     self.push_toast(
                                         now,
                                         format!(
-                                            "{} imported {} v{} ({})",
+                                            "{} mengimpor {} v{} ({})",
                                             added.origin.label(),
                                             added.name,
                                             added.latest_version,
@@ -2696,14 +2715,14 @@ impl SimpulLauncherApp {
                 .find(|a| a.id == target_id)
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| target_id.clone());
-            egui::Window::new(format!("Uninstall {app_name}?"))
+            egui::Window::new(format!("Hapus instalasi {app_name}?"))
                 .collapsible(false)
                 .resizable(false)
                 .default_width(380.0)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.label(
-                        "The application binary will be removed from Simpul Creative Launcher. Your creative documents and workspace settings stay safe.",
+                        "File program aplikasi ini akan dihapus dari Simpul Creative Launcher. Dokumen dan pengaturan kerjamu tidak disentuh.",
                     );
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
@@ -2722,7 +2741,7 @@ impl SimpulLauncherApp {
                                 AgentOrigin::SimpulSuite,
                             ) {
                                 self.persist();
-                                self.push_toast(now, format!("Uninstalled {removed}."), false);
+                                self.push_toast(now, format!("{removed} sudah dihapus."), false);
                             }
                             self.uninstall_confirm_id = None;
                         }
