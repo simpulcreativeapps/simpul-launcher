@@ -1,0 +1,11 @@
+{
+  "id": "simpul-media-bridge",
+  "name": "Simpul Media Bridge",
+  "version": "1.2.0",
+  "profile": "release",
+  "tagline": "Automated asset transcoder & metadata sync for SimpulGram and SimpulSync 4",
+  "headline": "Deploy-ready background transcoder imported via Claude / Antigravity (agy).",
+  "about": "Watches studio export folders, validates color profiles, and syncs approved masters straight into SimpulGram and SimpulSync 4.",
+  "category": "Automation • Deploy Ready",
+  "launch_flags": "--headless-queue"
+}

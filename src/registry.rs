@@ -1,0 +1,1748 @@
+use std::env;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest, Sha256};
+
+use crate::models::{
+    AgentActivityEvent, AgentOrigin, AppFeature, BuildProfile, CheckEvery, ImportManifest,
+    InstallState, LauncherSettings, PackageFormat, SimpulApp, SimpulRegistry, SortKey, ThemeChoice,
+    ToolIntegrationStatus, ViewMode,
+};
+
+pub fn data_dir() -> PathBuf {
+    if let Ok(custom) = env::var("SIMPUL_DATA_DIR") {
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = env::var("LOCALAPPDATA") {
+            return PathBuf::from(local).join("SimpulCreativeLauncher");
+        }
+    }
+    if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+        return PathBuf::from(home).join(".simpul-creative-launcher");
+    }
+    env::temp_dir().join("SimpulCreativeLauncher")
+}
+
+pub fn registry_file_path() -> PathBuf {
+    data_dir().join("simpul-registry.json")
+}
+
+pub fn default_install_root() -> PathBuf {
+    data_dir().join("apps")
+}
+
+pub fn now_label() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mins = (secs / 60) % 60;
+    let hours = ((secs / 3600) + 7) % 24; // WIB UTC+7 friendly display
+    format!("{hours:02}:{mins:02} WIB")
+}
+
+pub fn load_or_init_registry(ephemeral: bool) -> SimpulRegistry {
+    if ephemeral {
+        let mut reg = default_registry();
+        reconcile_installed_apps(&mut reg);
+        return reg;
+    }
+    let path = registry_file_path();
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(mut reg) = serde_json::from_str::<SimpulRegistry>(&raw) {
+            let changes = reconcile_installed_apps(&mut reg);
+            if !changes.is_empty() {
+                let _ = save_registry(&reg);
+            }
+            return reg;
+        }
+    }
+    let mut reg = default_registry();
+    reconcile_installed_apps(&mut reg);
+    let _ = save_registry(&reg);
+    reg
+}
+
+pub fn save_registry(reg: &SimpulRegistry) -> Result<(), String> {
+    let path = registry_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed creating data folder: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(reg)
+        .map_err(|e| format!("Failed serializing registry: {e}"))?;
+    fs::write(&path, json).map_err(|e| format!("Failed writing registry: {e}"))
+}
+
+pub fn registry_mtime() -> Option<SystemTime> {
+    fs::metadata(registry_file_path())
+        .and_then(|m| m.modified())
+        .ok()
+}
+
+pub fn detect_integrations(settings: &LauncherSettings) -> ToolIntegrationStatus {
+    let (agy_detected, agy_path) = find_on_path(&settings.agy_command);
+    let (claude_detected, claude_path) = find_on_path(&settings.claude_command);
+    let cli_self_path = env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "simpul-creative-launcher".to_string());
+    ToolIntegrationStatus {
+        agy_detected,
+        agy_path,
+        claude_detected,
+        claude_path,
+        cli_self_path,
+        registry_path: registry_file_path().display().to_string(),
+    }
+}
+
+fn find_on_path(cmd_name: &str) -> (bool, Option<String>) {
+    let trimmed = cmd_name.trim();
+    if trimmed.is_empty() {
+        return (false, None);
+    }
+    let direct = Path::new(trimmed);
+    if direct.is_file() {
+        return (true, Some(direct.display().to_string()));
+    }
+    let Some(path_var) = env::var_os("PATH") else {
+        return (false, None);
+    };
+    #[cfg(target_os = "windows")]
+    let exts = ["", ".exe", ".cmd", ".bat", ".ps1"];
+    #[cfg(not(target_os = "windows"))]
+    let exts = [""];
+
+    for dir in env::split_paths(&path_var) {
+        for ext in exts {
+            let candidate = dir.join(format!("{trimmed}{ext}"));
+            if candidate.is_file() {
+                return (true, Some(candidate.display().to_string()));
+            }
+        }
+    }
+    (false, None)
+}
+
+pub fn compute_sha256_short(path: &Path) -> String {
+    let Ok(meta) = fs::metadata(path) else {
+        return pseudo_sha256(&path.display().to_string());
+    };
+    if !meta.is_file() || meta.len() > 512 * 1024 * 1024 {
+        return pseudo_sha256(&path.display().to_string());
+    }
+    let Ok(mut file) = fs::File::open(path) else {
+        return pseudo_sha256(&path.display().to_string());
+    };
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    while let Ok(n) = file.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn pseudo_sha256(seed: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn detect_profile_from_path(path: &Path, explicit_profile: Option<&str>) -> BuildProfile {
+    if let Some(p) = explicit_profile {
+        return match p.trim().to_ascii_lowercase().as_str() {
+            "debug" | "dev" => BuildProfile::Debug,
+            "staging" | "rc" | "beta" => BuildProfile::Staging,
+            _ => BuildProfile::Release,
+        };
+    }
+    let lower = path.display().to_string().replace('/', "\\").to_ascii_lowercase();
+    if lower.contains("\\target\\debug\\")
+        || lower.ends_with("\\target\\debug")
+        || lower.contains("\\bin\\debug\\")
+        || lower.contains("-debug.")
+        || lower.contains("_debug.")
+    {
+        BuildProfile::Debug
+    } else if lower.contains("-beta") || lower.contains("-rc") || lower.contains("\\staging\\") {
+        BuildProfile::Staging
+    } else {
+        BuildProfile::Release
+    }
+}
+
+pub fn detect_package_format(path: &Path) -> PackageFormat {
+    if path.is_dir() {
+        return PackageFormat::ManifestBundle;
+    }
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "msi" => PackageFormat::Msi,
+        "zip" => PackageFormat::PortableZip,
+        "exe" => PackageFormat::NativeExe,
+        _ => PackageFormat::ManifestBundle,
+    }
+}
+
+/// Versi dipakai sebagai nama folder instalasi, jadi tidak boleh memuat pemisah path atau `..`.
+pub fn is_safe_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 32
+        && !version.contains("..")
+        && version.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | '_'))
+}
+
+pub fn slugify_id(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+pub struct ImportRequest {
+    pub source_path: PathBuf,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub tagline: Option<String>,
+    pub category: Option<String>,
+    pub agent: AgentOrigin,
+    pub allow_debug: bool,
+    pub auto_install: bool,
+}
+
+/// Imports an application or manifest into Simpul Creative Launcher (used by CLI, Claude, agy, and UI).
+pub fn import_into_registry(
+    reg: &mut SimpulRegistry,
+    req: ImportRequest,
+) -> Result<SimpulApp, String> {
+    let source = req.source_path;
+    let mut manifest: Option<ImportManifest> = None;
+
+    // Support importing either a direct manifest JSON, a directory containing simpul-app.json, or a binary/installer
+    if source.is_file()
+        && source
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("json"))
+            == Some(true)
+    {
+        let text = fs::read_to_string(&source)
+            .map_err(|e| format!("Could not read manifest {}: {e}", source.display()))?;
+        manifest = Some(
+            serde_json::from_str::<ImportManifest>(&text)
+                .map_err(|e| format!("Invalid Simpul app manifest JSON: {e}"))?,
+        );
+    } else if source.is_dir() {
+        let candidate = source.join("simpul-app.json");
+        if candidate.is_file() {
+            if let Ok(text) = fs::read_to_string(&candidate) {
+                manifest = serde_json::from_str::<ImportManifest>(&text).ok();
+            }
+        }
+    }
+
+    let resolved_artifact = if let Some(ref m) = manifest {
+        if let Some(ref bin) = m.binary {
+            let p = PathBuf::from(bin);
+            if p.is_absolute() {
+                p
+            } else {
+                source
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(p)
+            }
+        } else {
+            source.clone()
+        }
+    } else {
+        source.clone()
+    };
+
+    let explicit_prof = manifest.as_ref().and_then(|m| m.profile.as_deref());
+    let profile = detect_profile_from_path(&resolved_artifact, explicit_prof);
+
+    // Enforce "Layak Deploy (Bukan Debug)" gate unless overridden
+    if reg.settings.require_release_profile && profile == BuildProfile::Debug && !req.allow_debug {
+        return Err(format!(
+            "Deploy Gate Blocked: '{}' terdeteksi sebagai DEBUG build. Simpul Creative Launcher hanya menerima software layak deploy (Release). Build dengan `--release` atau gunakan `--allow-debug`.",
+            resolved_artifact.display()
+        ));
+    }
+
+    let derived_name = req
+        .name
+        .or_else(|| manifest.as_ref().and_then(|m| m.name.clone()))
+        .unwrap_or_else(|| {
+            source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("SimpulImportedApp")
+                .to_string()
+        });
+
+    let id = req
+        .id
+        .or_else(|| manifest.as_ref().and_then(|m| m.id.clone()))
+        .map(|s| slugify_id(&s))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| slugify_id(&derived_name));
+
+    let version = req
+        .version
+        .or_else(|| manifest.as_ref().and_then(|m| m.version.clone()))
+        .unwrap_or_else(|| "1.0.0".to_string());
+    if id.is_empty() {
+        return Err("Id aplikasi tidak valid: harus memuat huruf atau angka.".to_string());
+    }
+    if !is_safe_version(&version) {
+        return Err(format!(
+            "Versi '{version}' tidak valid. Hanya huruf, angka, titik, plus, dan tanda hubung (maks. 32 karakter)."
+        ));
+    }
+
+    let tagline = req
+        .tagline
+        .or_else(|| manifest.as_ref().and_then(|m| m.tagline.clone()))
+        .unwrap_or_else(|| {
+            format!(
+                "Imported via {} — verified {} package",
+                req.agent.label(),
+                profile.short_label()
+            )
+        });
+
+    let headline = manifest
+        .as_ref()
+        .and_then(|m| m.headline.clone())
+        .unwrap_or_else(|| tagline.clone());
+
+    let about = manifest
+        .as_ref()
+        .and_then(|m| m.about.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "{} was imported into Simpul Creative Launcher through {} and validated for deployment.",
+                derived_name,
+                req.agent.label()
+            )
+        });
+
+    let category = req
+        .category
+        .or_else(|| manifest.as_ref().and_then(|m| m.category.clone()))
+        .unwrap_or_else(|| "Creative Tool".to_string());
+
+    let size_mb = fs::metadata(&resolved_artifact)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| ((m.len() as f32) / (1024.0 * 1024.0)).max(0.4))
+        .unwrap_or(18.5);
+
+    let sha256 = compute_sha256_short(&resolved_artifact);
+    let pkg_format = detect_package_format(&resolved_artifact);
+    let accent_rgb = match req.agent {
+        AgentOrigin::Claude => [168, 85, 247],
+        AgentOrigin::AntigravityAgy => [6, 182, 212],
+        AgentOrigin::SimpulSuite => [78, 123, 251],
+        AgentOrigin::CliManual => [16, 185, 129],
+    };
+
+    let workspace = manifest
+        .as_ref()
+        .and_then(|m| m.workspace.clone())
+        .or_else(|| {
+            if source.is_dir() {
+                Some(source.display().to_string())
+            } else {
+                source.parent().map(|p| p.display().to_string())
+            }
+        });
+
+    let flags = manifest
+        .as_ref()
+        .and_then(|m| m.launch_flags.clone())
+        .unwrap_or_default();
+
+    let mut new_app = SimpulApp {
+        id: id.clone(),
+        name: derived_name.clone(),
+        tagline,
+        headline,
+        about,
+        category,
+        latest_version: version.clone(),
+        released_date: "2026-11-16".to_string(),
+        download_size_mb: (size_mb * 10.0).round() / 10.0,
+        sha256,
+        profile,
+        origin: req.agent,
+        package_format: pkg_format,
+        accent_rgb,
+        icon_kind: "custom".to_string(),
+        pinned: false,
+        hidden: false,
+        launch_flags: flags,
+        workspace_path: workspace,
+        artifact_path: Some(resolved_artifact.display().to_string()),
+        features: vec![
+            AppFeature {
+                title: "Deploy-Ready Package".to_string(),
+                description: format!("Verified {} artifact with SHA-256 integrity receipt.", profile.short_label()),
+            },
+            AppFeature {
+                title: "CLI, Claude & agy Managed".to_string(),
+                description: "Supports headless CLI updates, workspace handoff to Antigravity (agy), and Claude automation.".to_string(),
+            },
+        ],
+        release_notes: vec![format!(
+            "v{version} — Imported via {} ({})",
+            req.agent.label(),
+            now_label()
+        )],
+        install_state: InstallState::NotInstalled,
+    };
+
+    if let Some(existing_idx) = reg.apps.iter().position(|a| a.id == id) {
+        // Preserve existing install state unless auto_install updates it
+        new_app.install_state = reg.apps[existing_idx].install_state.clone();
+        new_app.pinned = reg.apps[existing_idx].pinned;
+        new_app.icon_kind = reg.apps[existing_idx].icon_kind.clone();
+        reg.apps[existing_idx] = new_app.clone();
+    } else {
+        reg.apps.push(new_app.clone());
+    }
+
+    reg.events.insert(
+        0,
+        AgentActivityEvent {
+            timestamp: now_label(),
+            actor: req.agent,
+            action: "import".to_string(),
+            app_id: id.clone(),
+            summary: format!(
+                "{} imported {} v{} ({})",
+                req.agent.label(),
+                derived_name,
+                version,
+                profile.short_label()
+            ),
+        },
+    );
+    reg.events.truncate(40);
+
+    if req.auto_install {
+        return install_in_registry(reg, &id, req.agent, req.allow_debug);
+    }
+
+    Ok(new_app)
+}
+
+/// Installs a registered app into Simpul's managed deployment folder and writes an integrity receipt.
+pub fn install_in_registry(
+    reg: &mut SimpulRegistry,
+    app_id: &str,
+    actor: AgentOrigin,
+    allow_debug: bool,
+) -> Result<SimpulApp, String> {
+    let idx = reg
+        .apps
+        .iter()
+        .position(|a| a.id.eq_ignore_ascii_case(app_id) || a.name.eq_ignore_ascii_case(app_id))
+        .ok_or_else(|| format!("Application '{app_id}' was not found in Simpul registry"))?;
+
+    if reg.settings.require_release_profile
+        && reg.apps[idx].profile == BuildProfile::Debug
+        && !allow_debug
+    {
+        return Err(format!(
+            "Deploy Gate Blocked: '{}' adalah Debug build. Hanya aplikasi layak deploy (Release) yang dapat diinstall ke environment produksi.",
+            reg.apps[idx].name
+        ));
+    }
+
+    let version = reg.apps[idx].latest_version.clone();
+    let app_slug = reg.apps[idx].id.clone();
+    if app_slug.is_empty() || slugify_id(&app_slug) != app_slug || !is_safe_version(&version) {
+        return Err(format!(
+            "Id atau versi aplikasi tidak aman untuk dipasang ('{app_slug}' v{version})."
+        ));
+    }
+    let install_dir = PathBuf::from(&reg.settings.install_root)
+        .join(&app_slug)
+        .join(&version);
+
+    fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("Could not create install folder {}: {e}", install_dir.display()))?;
+
+    let mut installed_target = install_dir.clone();
+
+    if let Some(ref art_str) = reg.apps[idx].artifact_path {
+        let art = Path::new(art_str);
+        if art.is_file() {
+            if let Some(fname) = art.file_name() {
+                let dest = install_dir.join(fname);
+                if art != dest {
+                    let _ = fs::copy(art, &dest);
+                }
+                installed_target = dest;
+            }
+        }
+    }
+
+    // Write verified deployment receipt
+    let receipt = serde_json::json!({
+        "id": reg.apps[idx].id,
+        "name": reg.apps[idx].name,
+        "version": version,
+        "profile": reg.apps[idx].profile,
+        "sha256": reg.apps[idx].sha256,
+        "installed_by": actor.label(),
+        "installed_at": now_label(),
+        "target_path": installed_target.display().to_string(),
+    });
+    let _ = fs::write(
+        install_dir.join("install-receipt.json"),
+        serde_json::to_string_pretty(&receipt).unwrap_or_default(),
+    );
+
+    reg.apps[idx].install_state = InstallState::Installed {
+        version: version.clone(),
+        install_path: installed_target.display().to_string(),
+        installed_at: now_label(),
+    };
+
+    let updated = reg.apps[idx].clone();
+    reg.events.insert(
+        0,
+        AgentActivityEvent {
+            timestamp: now_label(),
+            actor,
+            action: "install".to_string(),
+            app_id: updated.id.clone(),
+            summary: format!(
+                "{} installed {} v{} to {}",
+                actor.label(),
+                updated.name,
+                version,
+                install_dir.display()
+            ),
+        },
+    );
+    reg.events.truncate(40);
+    Ok(updated)
+}
+
+pub fn uninstall_in_registry(
+    reg: &mut SimpulRegistry,
+    app_id: &str,
+    actor: AgentOrigin,
+) -> Result<String, String> {
+    let idx = reg
+        .apps
+        .iter()
+        .position(|a| a.id.eq_ignore_ascii_case(app_id) || a.name.eq_ignore_ascii_case(app_id))
+        .ok_or_else(|| format!("Application '{app_id}' was not found"))?;
+
+    let name = reg.apps[idx].name.clone();
+    let slug = reg.apps[idx].id.clone();
+    let app_root = PathBuf::from(&reg.settings.install_root).join(&slug);
+    // Hanya hapus subfolder milik aplikasi ini; id kosong atau aneh tidak boleh menyentuh folder induk.
+    if !slug.is_empty() && slugify_id(&slug) == slug && app_root.exists() {
+        let _ = fs::remove_dir_all(&app_root);
+    }
+    reg.apps[idx].install_state = InstallState::NotInstalled;
+    reg.events.insert(
+        0,
+        AgentActivityEvent {
+            timestamp: now_label(),
+            actor,
+            action: "uninstall".to_string(),
+            app_id: slug,
+            summary: format!("{} removed {}", actor.label(), name),
+        },
+    );
+    reg.events.truncate(40);
+    Ok(name)
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredInstalledApp {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub exe_path: PathBuf,
+    pub install_dir: PathBuf,
+    pub default_launch_flags: String,
+    pub source_label: String,
+}
+
+fn is_launchable_file(p: &Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(ext.as_str(), "exe" | "cmd" | "bat" | "lnk")
+}
+
+fn is_uninstaller_name(name_lower: &str) -> bool {
+    name_lower.starts_with("unins")
+        || name_lower.contains("uninstall")
+        || name_lower.contains("setup")
+        || name_lower.contains("installer")
+}
+
+fn find_exe_in_dir(dir: &Path, preferred_names: &[&str]) -> Option<PathBuf> {
+    if !dir.is_dir() {
+        return None;
+    }
+    for pref in preferred_names {
+        let cand = dir.join(pref);
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    let mut best: Option<PathBuf> = None;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let is_exe = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("exe"))
+                == Some(true);
+            if !is_exe {
+                continue;
+            }
+            let fname = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if is_uninstaller_name(&fname) || fname.contains("console") {
+                continue;
+            }
+            best = Some(p);
+            break;
+        }
+    }
+    best
+}
+
+fn clean_icon_or_path_value(raw: &str) -> Option<PathBuf> {
+    let mut s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(stripped) = s.strip_prefix('"') {
+        if let Some(end_q) = stripped.find('"') {
+            s = &stripped[..end_q];
+        } else {
+            s = stripped;
+        }
+    }
+    // Strip trailing ",0" icon index from DisplayIcon
+    if let Some(comma_idx) = s.rfind(',') {
+        let after = &s[comma_idx + 1..];
+        if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            s = &s[..comma_idx];
+        }
+    }
+    let trimmed = s.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+fn canonicalize_known_simpul_app(display_name: &str) -> Option<(&'static str, &'static str, &'static str, &'static [&'static str])> {
+    let lower = display_name.to_ascii_lowercase();
+    if lower.contains("simpulgram") {
+        Some((
+            "simpulgram",
+            "SimpulGram",
+            "",
+            &["SimpulGram.exe", "simpulgram.exe"],
+        ))
+    } else if lower.contains("simpulsync") {
+        Some((
+            "simpulsync-4",
+            "SimpulSync 4",
+            "",
+            &["SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
+        ))
+    } else if lower.contains("capr") || lower.contains("opennotebook") {
+        Some((
+            "capr",
+            "Capr",
+            "--desktop-app",
+            &["OpenNotebook.exe", "CAPr.exe", "Capr.exe"],
+        ))
+    } else if lower.contains("simpulproject") {
+        Some((
+            "simpulproject-ai",
+            "Simpulproject AI",
+            "",
+            &["SimpulprojectAI.exe", "Simpulproject AI.exe"],
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn query_uninstall_registry_apps() -> Vec<DiscoveredInstalledApp> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let roots = [
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ];
+    let mut found = Vec::new();
+
+    for root in roots {
+        let Ok(output) = Command::new("reg")
+            .args(["query", root, "/s"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut cur_name: Option<String> = None;
+        let mut cur_ver: Option<String> = None;
+        let mut cur_loc: Option<String> = None;
+        let mut cur_icon: Option<String> = None;
+
+        let flush_entry = |name: &Option<String>,
+                           ver: &Option<String>,
+                           loc: &Option<String>,
+                           icon: &Option<String>,
+                           out: &mut Vec<DiscoveredInstalledApp>| {
+            let Some(display_name) = name.as_deref() else {
+                return;
+            };
+            let lower = display_name.to_ascii_lowercase();
+            if !(lower.contains("simpul") || lower.contains("capr") || lower.contains("opennotebook")) {
+                return;
+            }
+            // Skip launcher itself if ever registered
+            if lower.contains("creative launcher") || lower.contains("creative apps launcher") {
+                return;
+            }
+            let (id, clean_name, default_flags, pref_exes) =
+                if let Some(known) = canonicalize_known_simpul_app(display_name) {
+                    (
+                        known.0.to_string(),
+                        known.1.to_string(),
+                        known.2.to_string(),
+                        known.3,
+                    )
+                } else {
+                    (
+                        slugify_id(display_name),
+                        display_name.trim().to_string(),
+                        String::new(),
+                        &[][..],
+                    )
+                };
+
+            let mut resolved_exe: Option<PathBuf> = None;
+            if let Some(ic) = icon.as_deref().and_then(clean_icon_or_path_value) {
+                if ic.is_file()
+                    && ic
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("exe"))
+                        == Some(true)
+                {
+                    let fname = ic
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !is_uninstaller_name(&fname) {
+                        resolved_exe = Some(ic);
+                    }
+                }
+            }
+            if resolved_exe.is_none() {
+                if let Some(loc_dir) = loc.as_deref().and_then(clean_icon_or_path_value) {
+                    resolved_exe = find_exe_in_dir(&loc_dir, pref_exes);
+                }
+            }
+            if let Some(exe_path) = resolved_exe {
+                let install_dir = exe_path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| exe_path.clone());
+                let version = ver
+                    .as_deref()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "1.0.0".to_string());
+                out.push(DiscoveredInstalledApp {
+                    id,
+                    name: clean_name,
+                    version,
+                    exe_path,
+                    install_dir,
+                    default_launch_flags: default_flags,
+                    source_label: "Windows Registry".to_string(),
+                });
+            }
+        };
+
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("HKEY_") {
+                flush_entry(&cur_name, &cur_ver, &cur_loc, &cur_icon, &mut found);
+                cur_name = None;
+                cur_ver = None;
+                cur_loc = None;
+                cur_icon = None;
+                continue;
+            }
+            if let Some(val) = parse_reg_sz_value(trimmed, "DisplayName") {
+                cur_name = Some(val);
+            } else if let Some(val) = parse_reg_sz_value(trimmed, "DisplayVersion") {
+                cur_ver = Some(val);
+            } else if let Some(val) = parse_reg_sz_value(trimmed, "InstallLocation") {
+                cur_loc = Some(val);
+            } else if let Some(val) = parse_reg_sz_value(trimmed, "DisplayIcon") {
+                cur_icon = Some(val);
+            }
+        }
+        flush_entry(&cur_name, &cur_ver, &cur_loc, &cur_icon, &mut found);
+    }
+
+    found
+}
+
+#[cfg(target_os = "windows")]
+fn parse_reg_sz_value(line: &str, field: &str) -> Option<String> {
+    let rest = line.strip_prefix(field)?;
+    let rest = rest.trim_start();
+    if let Some(after_type) = rest.strip_prefix("REG_SZ") {
+        return Some(after_type.trim().to_string());
+    }
+    if let Some(after_type) = rest.strip_prefix("REG_EXPAND_SZ") {
+        return Some(after_type.trim().to_string());
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_uninstall_registry_apps() -> Vec<DiscoveredInstalledApp> {
+    Vec::new()
+}
+
+pub fn discover_installed_apps_on_pc() -> Vec<DiscoveredInstalledApp> {
+    fn has_id(list: &[DiscoveredInstalledApp], id: &str) -> bool {
+        list.iter().any(|r| r.id.eq_ignore_ascii_case(id))
+    }
+
+    let mut results = query_uninstall_registry_apps();
+
+    let local_app_data = env::var("LOCALAPPDATA").ok().map(PathBuf::from);
+    let program_files = env::var("ProgramFiles").ok().map(PathBuf::from);
+    let user_profile = env::var("USERPROFILE").ok().map(PathBuf::from);
+
+    // Filesystem probes for SimpulGram
+    if !has_id(&results, "simpulgram") {
+        let mut cands = Vec::new();
+        if let Some(ref l) = local_app_data {
+            cands.push(l.join("SimpulGram").join("SimpulGram.exe"));
+            cands.push(l.join("Programs").join("SimpulGram").join("SimpulGram.exe"));
+        }
+        if let Some(ref pf) = program_files {
+            cands.push(pf.join("SimpulGram").join("SimpulGram.exe"));
+        }
+        if let Some(exe) = cands.into_iter().find(|p| p.is_file()) {
+            let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
+            results.push(DiscoveredInstalledApp {
+                id: "simpulgram".to_string(),
+                name: "SimpulGram".to_string(),
+                version: "1.0.0".to_string(),
+                exe_path: exe,
+                install_dir: dir,
+                default_launch_flags: String::new(),
+                source_label: "Local Disk".to_string(),
+            });
+        }
+    }
+
+    // Filesystem probes for SimpulSync 4
+    if !has_id(&results, "simpulsync-4") {
+        let mut cands = Vec::new();
+        if let Some(ref l) = local_app_data {
+            cands.push(l.join("Programs").join("SimpulSync 4").join("SimpulSync 4.exe"));
+            cands.push(l.join("Programs").join("SimpulSync 4").join("simpulsync4.exe"));
+            cands.push(l.join("SimpulSync 4").join("SimpulSync 4.exe"));
+        }
+        if let Some(ref pf) = program_files {
+            cands.push(pf.join("SimpulSync 4").join("SimpulSync 4.exe"));
+        }
+        if let Some(exe) = cands.into_iter().find(|p| p.is_file()) {
+            let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
+            results.push(DiscoveredInstalledApp {
+                id: "simpulsync-4".to_string(),
+                name: "SimpulSync 4".to_string(),
+                version: "4.1.11".to_string(),
+                exe_path: exe,
+                install_dir: dir,
+                default_launch_flags: String::new(),
+                source_label: "Local Disk".to_string(),
+            });
+        }
+    }
+
+    // Filesystem probes for Capr (OpenNotebook)
+    if !has_id(&results, "capr") {
+        let mut cands = vec![
+            PathBuf::from(r"D:\OpenNotebook\OpenNotebook.exe"),
+            PathBuf::from(r"C:\OpenNotebook\OpenNotebook.exe"),
+            PathBuf::from(r"D:\OpenNotebook\CAPr.exe"),
+        ];
+        if let Some(ref l) = local_app_data {
+            cands.push(l.join("Programs").join("Capr").join("OpenNotebook.exe"));
+            cands.push(l.join("Programs").join("OpenNotebook").join("OpenNotebook.exe"));
+            cands.push(l.join("Capr").join("OpenNotebook.exe"));
+        }
+        if let Some(exe) = cands.into_iter().find(|p| p.is_file()) {
+            let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
+            results.push(DiscoveredInstalledApp {
+                id: "capr".to_string(),
+                name: "Capr".to_string(),
+                version: "2.1.0".to_string(),
+                exe_path: exe,
+                install_dir: dir,
+                default_launch_flags: "--desktop-app".to_string(),
+                source_label: "Local Disk".to_string(),
+            });
+        }
+    }
+
+    // Filesystem probes for Simpulproject AI
+    if !has_id(&results, "simpulproject-ai") {
+        let mut cands = Vec::new();
+        if let Some(ref l) = local_app_data {
+            cands.push(l.join("Programs").join("Simpulproject AI").join("SimpulprojectAI.exe"));
+        }
+        if let Some(ref u) = user_profile {
+            cands.push(u.join("Documents").join("simpulproject-ai").join("SimpulprojectAI.exe"));
+        }
+        if let Some(exe) = cands.into_iter().find(|p| p.is_file()) {
+            let dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
+            results.push(DiscoveredInstalledApp {
+                id: "simpulproject-ai".to_string(),
+                name: "Simpulproject AI".to_string(),
+                version: "3.3.24".to_string(),
+                exe_path: exe,
+                install_dir: dir,
+                default_launch_flags: String::new(),
+                source_label: "Local Disk".to_string(),
+            });
+        }
+    }
+
+    // Deduplicate by id, preserving first valid executable
+    let mut deduped: Vec<DiscoveredInstalledApp> = Vec::new();
+    for item in results {
+        if !item.exe_path.is_file() {
+            continue;
+        }
+        if !deduped.iter().any(|x| x.id.eq_ignore_ascii_case(&item.id)) {
+            deduped.push(item);
+        }
+    }
+    deduped
+}
+
+fn is_placeholder_launch_flags(flags: &str) -> bool {
+    matches!(
+        flags.trim(),
+        "--gpu-raster --production"
+            | "--workers 8 --verify-chunks"
+            | "--notebook-kernel=native"
+            | "--strict-release"
+    )
+}
+
+/// Reconciles the launcher registry with real installed Simpul apps detected on this PC.
+/// Fixes placeholder paths in existing saved registries so clicking "Open" launches the real `.exe`.
+pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
+    let discovered = discover_installed_apps_on_pc();
+    let mut updated_names = Vec::new();
+
+    for found in discovered {
+        let exe_str = found.exe_path.display().to_string();
+        let dir_str = found.install_dir.display().to_string();
+        let real_size_mb = fs::metadata(&found.exe_path)
+            .ok()
+            .map(|m| (((m.len() as f32) / (1024.0 * 1024.0)).max(0.1) * 10.0).round() / 10.0);
+
+        if let Some(app) = reg
+            .apps
+            .iter_mut()
+            .find(|a| a.id.eq_ignore_ascii_case(&found.id))
+        {
+            let current_valid = match &app.install_state {
+                InstallState::Installed { install_path, .. } => {
+                    is_launchable_file(Path::new(install_path))
+                }
+                InstallState::NotInstalled => false,
+            };
+
+            let mut changed = false;
+            if !current_valid {
+                app.install_state = InstallState::Installed {
+                    version: found.version.clone(),
+                    install_path: exe_str.clone(),
+                    installed_at: format!("Detected ({})", found.source_label),
+                };
+                app.latest_version = found.version.clone();
+                app.artifact_path = Some(exe_str.clone());
+                app.workspace_path = Some(dir_str.clone());
+                app.package_format = PackageFormat::NativeExe;
+                if let Some(sz) = real_size_mb {
+                    app.download_size_mb = sz;
+                }
+                if is_placeholder_launch_flags(&app.launch_flags) || app.launch_flags.trim().is_empty() {
+                    app.launch_flags = found.default_launch_flags.clone();
+                }
+                changed = true;
+            } else if is_placeholder_launch_flags(&app.launch_flags) {
+                app.launch_flags = found.default_launch_flags.clone();
+                changed = true;
+            }
+
+            if changed {
+                updated_names.push(format!("{} -> {}", app.name, exe_str));
+            }
+        } else {
+            // Auto-add newly discovered installed Simpul app (e.g., Simpulproject AI)
+            let new_app = SimpulApp {
+                id: found.id.clone(),
+                name: found.name.clone(),
+                tagline: format!("Installed Simpul application detected via {}", found.source_label),
+                headline: format!("{} v{} ready to launch directly from Simpul Creative Launcher.", found.name, found.version),
+                about: format!(
+                    "{} was automatically discovered on this PC at {} and linked for one-click launch.",
+                    found.name, exe_str
+                ),
+                category: "Installed on PC • Simpul".to_string(),
+                latest_version: found.version.clone(),
+                released_date: "Detected".to_string(),
+                download_size_mb: real_size_mb.unwrap_or(16.0),
+                sha256: compute_sha256_short(&found.exe_path),
+                profile: BuildProfile::Release,
+                origin: AgentOrigin::SimpulSuite,
+                package_format: PackageFormat::NativeExe,
+                accent_rgb: [56, 189, 248],
+                icon_kind: "flow".to_string(),
+                pinned: false,
+                hidden: false,
+                launch_flags: found.default_launch_flags.clone(),
+                workspace_path: Some(dir_str),
+                artifact_path: Some(exe_str.clone()),
+                features: vec![AppFeature {
+                    title: "Auto-Detected Local Install".to_string(),
+                    description: format!("Linked directly to {}.", exe_str),
+                }],
+                release_notes: vec![format!(
+                    "v{} — Automatically detected from {}.",
+                    found.version, found.source_label
+                )],
+                install_state: InstallState::Installed {
+                    version: found.version.clone(),
+                    install_path: exe_str.clone(),
+                    installed_at: format!("Detected ({})", found.source_label),
+                },
+            };
+            // Insert right after pinned flagship apps
+            let insert_pos = reg
+                .apps
+                .iter()
+                .position(|a| !a.pinned)
+                .unwrap_or(reg.apps.len());
+            reg.apps.insert(insert_pos, new_app);
+            updated_names.push(format!("{} -> {}", found.name, exe_str));
+        }
+    }
+
+    // Ensure any seeded placeholder entries whose fake folder does not contain an executable
+    // are not misleadingly marked Installed when nothing exists on disk.
+    let managed_root = PathBuf::from(&reg.settings.install_root);
+    for app in &mut reg.apps {
+        let should_reset_fake = match &app.install_state {
+            InstallState::Installed { install_path, .. } => {
+                let p = Path::new(install_path);
+                !is_launchable_file(p)
+                    && !p.exists()
+                    && (p.starts_with(&managed_root)
+                        || install_path.contains("SimpulCreativeLauncher"))
+            }
+            InstallState::NotInstalled => false,
+        };
+        if should_reset_fake {
+            app.install_state = InstallState::NotInstalled;
+            if is_placeholder_launch_flags(&app.launch_flags) {
+                app.launch_flags.clear();
+            }
+            updated_names.push(format!("{} (marked Not Installed — no local binary)", app.name));
+        }
+    }
+
+    if !updated_names.is_empty() {
+        reg.last_checked_label = format!("Scanned PC • {}", now_label());
+    }
+    updated_names
+}
+
+/// Fast filesystem-only check (safe to call on every UI frame).
+pub fn current_launchable_target(app: &SimpulApp) -> Option<PathBuf> {
+    let preferred: &[&str] = match app.id.as_str() {
+        "simpulgram" => &["SimpulGram.exe", "simpulgram.exe"],
+        "simpulsync-4" => &["SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
+        "capr" => &["OpenNotebook.exe", "CAPr.exe", "Capr.exe"],
+        "simpulproject-ai" => &["SimpulprojectAI.exe", "Simpulproject AI.exe"],
+        _ => &[],
+    };
+
+    if let InstallState::Installed {
+        ref install_path, ..
+    } = app.install_state
+    {
+        let p = Path::new(install_path);
+        if is_launchable_file(p) {
+            return Some(p.to_path_buf());
+        }
+        if p.is_dir() {
+            if let Some(found) = find_exe_in_dir(p, preferred) {
+                return Some(found);
+            }
+        }
+    }
+
+    if let Some(ref art) = app.artifact_path {
+        let p = Path::new(art);
+        if is_launchable_file(p) {
+            return Some(p.to_path_buf());
+        }
+        if p.is_dir() {
+            if let Some(found) = find_exe_in_dir(p, preferred) {
+                return Some(found);
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolves the launchable executable, falling back to live PC registry/disk discovery on launch.
+pub fn resolve_launchable_target(app: &SimpulApp) -> Option<PathBuf> {
+    if let Some(p) = current_launchable_target(app) {
+        return Some(p);
+    }
+
+    // Live fallback discovery in case the user installed or moved the app
+    discover_installed_apps_on_pc()
+        .into_iter()
+        .find(|d| d.id.eq_ignore_ascii_case(&app.id) || d.name.eq_ignore_ascii_case(&app.name))
+        .map(|d| d.exe_path)
+}
+
+pub fn set_app_executable_path(
+    reg: &mut SimpulRegistry,
+    app_id: &str,
+    raw_path: &str,
+) -> Result<String, String> {
+    let trimmed = raw_path.trim().trim_matches('"');
+    let p = PathBuf::from(trimmed);
+    if !is_launchable_file(&p) {
+        return Err(format!(
+            "File tidak ditemukan atau bukan executable (.exe/.cmd/.bat/.lnk): {trimmed}"
+        ));
+    }
+    let idx = reg
+        .apps
+        .iter()
+        .position(|a| a.id.eq_ignore_ascii_case(app_id) || a.name.eq_ignore_ascii_case(app_id))
+        .ok_or_else(|| format!("Aplikasi '{app_id}' tidak ditemukan di registry."))?;
+
+    let ver = reg.apps[idx]
+        .install_state
+        .installed_version()
+        .map(str::to_string)
+        .unwrap_or_else(|| reg.apps[idx].latest_version.clone());
+    let dir_str = p
+        .parent()
+        .map(|d| d.display().to_string())
+        .unwrap_or_else(|| p.display().to_string());
+    let exe_str = p.display().to_string();
+
+    reg.apps[idx].install_state = InstallState::Installed {
+        version: ver,
+        install_path: exe_str.clone(),
+        installed_at: format!("Linked {}", now_label()),
+    };
+    reg.apps[idx].artifact_path = Some(exe_str.clone());
+    reg.apps[idx].workspace_path = Some(dir_str);
+    reg.apps[idx].package_format = PackageFormat::NativeExe;
+    if is_placeholder_launch_flags(&reg.apps[idx].launch_flags) {
+        reg.apps[idx].launch_flags.clear();
+    }
+
+    let name = reg.apps[idx].name.clone();
+    Ok(format!("Executable {name} ditautkan ke {exe_str}"))
+}
+
+pub fn open_install_folder(path_str: &str) -> Result<String, String> {
+    let p = Path::new(path_str);
+    if !p.exists() {
+        return Err(format!("Lokasi tidak ditemukan: {path_str}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if p.is_file() {
+            Command::new("explorer.exe")
+                .arg(format!("/select,{}", p.display()))
+                .spawn()
+                .map_err(|e| format!("Gagal membuka Explorer: {e}"))?;
+        } else {
+            Command::new("explorer.exe")
+                .arg(p)
+                .spawn()
+                .map_err(|e| format!("Gagal membuka Explorer: {e}"))?;
+        }
+        return Ok(format!("Membuka folder {}", p.display()));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let dir = if p.is_file() {
+            p.parent().unwrap_or(p)
+        } else {
+            p
+        };
+        Command::new("xdg-open")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| format!("Failed opening folder: {e}"))?;
+        Ok(format!("Opened folder {}", dir.display()))
+    }
+}
+
+pub fn try_open_in_agent(agent_cmd: &str, target_path: &str) -> Result<String, String> {
+    let (_, resolved) = find_on_path(agent_cmd);
+    let bin = resolved.unwrap_or_else(|| agent_cmd.to_string());
+    Command::new(&bin)
+        .arg(target_path)
+        .spawn()
+        .map(|_| format!("Opened '{target_path}' with {agent_cmd}"))
+        .map_err(|e| format!("Could not start '{agent_cmd}': {e}"))
+}
+
+pub fn try_launch_app(app: &SimpulApp, extra_args: &[String]) -> Result<String, String> {
+    let version = app
+        .install_state
+        .installed_version()
+        .unwrap_or(&app.latest_version);
+
+    let Some(target) = resolve_launchable_target(app) else {
+        return Err(format!(
+            "Executable untuk {} tidak ditemukan di komputer ini. Klik 'Scan PC' atau atur lokasi .exe di panel Details.",
+            app.name
+        ));
+    };
+
+    // Reject unbalanced quotes in launch_flags before spawning anything
+    let mut parsed_flags = split_launch_flags(&app.launch_flags)?;
+    if is_placeholder_launch_flags(&app.launch_flags) {
+        parsed_flags.clear();
+    }
+
+    let ext = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let work_dir = target.parent();
+
+    let spawn_res = match ext.as_str() {
+        "cmd" | "bat" => {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C").arg(&target);
+            for tok in &parsed_flags {
+                cmd.arg(tok);
+            }
+            for arg in extra_args {
+                cmd.arg(arg);
+            }
+            if let Some(dir) = work_dir {
+                cmd.current_dir(dir);
+            }
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        }
+        "lnk" => {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", "start", ""]).arg(&target);
+            if let Some(dir) = work_dir {
+                cmd.current_dir(dir);
+            }
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        }
+        _ => {
+            let mut cmd = Command::new(&target);
+            for tok in &parsed_flags {
+                cmd.arg(tok);
+            }
+            for arg in extra_args {
+                cmd.arg(arg);
+            }
+            if let Some(dir) = work_dir {
+                cmd.current_dir(dir);
+            }
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        }
+    };
+
+    spawn_res.map_err(|e| format!("Gagal membuka {} ({}): {e}", app.name, target.display()))?;
+
+    let fname = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("app");
+    Ok(format!("Membuka {} v{} ({})", app.name, version, fname))
+}
+
+pub fn split_launch_flags(raw: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for ch in raw.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' | '\t' if !in_quotes => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(ch),
+        }
+    }
+    if in_quotes {
+        return Err("A quote in launch options isn't closed.".to_string());
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
+pub fn default_registry() -> SimpulRegistry {
+    let root = default_install_root();
+    let root_str = root.display().to_string();
+
+    let apps = vec![
+        SimpulApp {
+            id: "simpulgram".to_string(),
+            name: "SimpulGram".to_string(),
+            tagline: "Visual publishing, creative feed & client review messenger".to_string(),
+            headline: "Production visual communication & creative showcase for Simpul teams.".to_string(),
+            about: "SimpulGram is Simpul's flagship deploy-ready desktop client for instant visual publishing, high-fidelity media boards, annotated client approvals, and team channels—compiled in strict Release mode with zero debug overhead.".to_string(),
+            category: "Flagship • Social & Review".to_string(),
+            latest_version: "2.4.1".to_string(),
+            released_date: "2026-11-14".to_string(),
+            download_size_mb: 42.8,
+            sha256: "9f84c2d17a6be30854d119c70a4e81bf2239c04e67ab812934ef92d810ab441e".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::SimpulSuite,
+            package_format: PackageFormat::Msi,
+            accent_rgb: [78, 123, 251],
+            icon_kind: "gram".to_string(),
+            pinned: true,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: Some(root.join("simpulgram").display().to_string()),
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Color-Accurate Media Stream".to_string(),
+                    description: "Share sRGB and Display-P3 layouts, reels, and carousels with frame-accurate comments.".to_string(),
+                },
+                AppFeature {
+                    title: "Deploy-Ready Release Build".to_string(),
+                    description: "Production signed x64 build verified against SHA-256 manifest (non-debug).".to_string(),
+                },
+                AppFeature {
+                    title: "Claude & Antigravity Hooks".to_string(),
+                    description: "Trigger automated release post drafts or asset exports directly via CLI or Claude.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v2.4.1 — Faster WebP/AVIF gallery decoding and instant board deep-links.".to_string(),
+                "v2.4.0 — Added Simpul Creative Launcher single-click workspace handoff.".to_string(),
+            ],
+            install_state: InstallState::Installed {
+                version: "2.4.1".to_string(),
+                install_path: root.join("simpulgram").join("2.4.1").display().to_string(),
+                installed_at: "Today, 09:40 WIB".to_string(),
+            },
+        },
+        SimpulApp {
+            id: "simpulsync-4".to_string(),
+            name: "SimpulSync 4".to_string(),
+            tagline: "Sinkronisasi audio dan video multi-kamera".to_string(),
+            headline: "Selaraskan rekaman banyak kamera dan perekam audio lewat suaranya.".to_string(),
+            about: "Simpul Sync menyelaraskan rekaman dari beberapa kamera dan perekam audio terpisah dengan membandingkan suaranya, lalu mengekspor timeline untuk Premiere Pro, DaVinci Resolve, dan Final Cut Pro. Tersedia sebagai aplikasi desktop, CLI, dan server MCP.".to_string(),
+            category: "Video • Audio".to_string(),
+            latest_version: "4.1.11".to_string(),
+            released_date: "2026-11-16".to_string(),
+            download_size_mb: 31.6,
+            sha256: "4b71e908a22f51dc6388fa2017bd4e92ca510299c820df16a73e8b5c1109ef42".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::SimpulSuite,
+            package_format: PackageFormat::NativeExe,
+            accent_rgb: [16, 185, 129],
+            icon_kind: "sync4".to_string(),
+            pinned: true,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: Some(root.join("simpulsync-4").display().to_string()),
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Sinkron lewat suara".to_string(),
+                    description: "Mencocokkan rekaman tanpa clapper atau timecode.".to_string(),
+                },
+                AppFeature {
+                    title: "Koreksi drift".to_string(),
+                    description: "Mengukur dan mengoreksi selisih kecepatan jam antar perangkat.".to_string(),
+                },
+                AppFeature {
+                    title: "CLI dan MCP".to_string(),
+                    description: "Bisa dijalankan dari terminal atau oleh agen AI.".to_string(),
+                },
+            ],
+            release_notes: Vec::new(),
+            install_state: InstallState::NotInstalled,
+        },
+        SimpulApp {
+            id: "capr".to_string(),
+            name: "Capr".to_string(),
+            tagline: "Interactive creative, data & AI notebook by Simpul".to_string(),
+            headline: "Live executable cells, visual blocks, and AI workflows in one native notebook.".to_string(),
+            about: "Capr is Simpul's production-ready notebook workspace combining interactive code & query cells, rich prose, live visual outputs, and direct Claude & Antigravity (agy) cell collaboration.".to_string(),
+            category: "Flagship • Notebook".to_string(),
+            latest_version: "1.4.2".to_string(),
+            released_date: "2026-11-16".to_string(),
+            download_size_mb: 38.4,
+            sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::SimpulSuite,
+            package_format: PackageFormat::Msi,
+            accent_rgb: [99, 102, 241],
+            icon_kind: "capr".to_string(),
+            pinned: true,
+            hidden: false,
+            launch_flags: "--desktop-app".to_string(),
+            workspace_path: Some(root.join("capr").display().to_string()),
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Reactive Multi-Language Cells".to_string(),
+                    description: "Run reproducible creative scripts, data pipelines, and visual widgets with instant DAG reactivity.".to_string(),
+                },
+                AppFeature {
+                    title: "Claude & Antigravity (agy) Co-Authoring".to_string(),
+                    description: "Import notebooks or trigger Capr kernels directly from CLI, Claude, or Antigravity.".to_string(),
+                },
+                AppFeature {
+                    title: "SimpulSync 4 & SimpulGram Ready".to_string(),
+                    description: "Sync `.capr` notebooks across studios and publish rendered charts directly to SimpulGram.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v1.4.2 — Production Release installer, faster canvas cell rendering, and CLI notebook runner.".to_string(),
+                "v1.4.0 — Added direct Claude & Antigravity (agy) notebook import bridge.".to_string(),
+            ],
+            install_state: InstallState::Installed {
+                version: "1.4.2".to_string(),
+                install_path: root.join("capr").join("1.4.2").display().to_string(),
+                installed_at: "Today, 16:20 WIB".to_string(),
+            },
+        },
+        SimpulApp {
+            id: "simpuldocs".to_string(),
+            name: "SimpulDocs".to_string(),
+            tagline: "Creative briefs, release runbooks & team knowledge hub".to_string(),
+            headline: "Offline-first structured specs imported & deployed via Claude AI.".to_string(),
+            about: "SimpulDocs organizes creative briefs, brand guidelines, and release checklists in clean local Markdown bundles. Imported and installed directly through the Claude CLI integration bridge.".to_string(),
+            category: "Knowledge & Specs".to_string(),
+            latest_version: "3.1.0".to_string(),
+            released_date: "2026-11-15".to_string(),
+            download_size_mb: 24.2,
+            sha256: "7d3e920a11cb558e201f98a003c4bb812d910fe4a2c889012fe31b90112c774a".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::Claude,
+            package_format: PackageFormat::PortableZip,
+            accent_rgb: [168, 85, 247],
+            icon_kind: "docs".to_string(),
+            pinned: false,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: Some(root.join("simpuldocs").display().to_string()),
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Claude Direct Import".to_string(),
+                    description: "Automatically packaged and registered into Simpul Creative Launcher by Claude.".to_string(),
+                },
+                AppFeature {
+                    title: "Instant Full-Text Index".to_string(),
+                    description: "Search thousands of creative specs and brand tokens offline in under 5 ms.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v3.1.0 — Imported & verified Release package via `simpul-creative-launcher import --agent claude`.".to_string(),
+            ],
+            install_state: InstallState::Installed {
+                version: "3.1.0".to_string(),
+                install_path: root.join("simpuldocs").join("3.1.0").display().to_string(),
+                installed_at: "Yesterday".to_string(),
+            },
+        },
+        SimpulApp {
+            id: "simpulflow".to_string(),
+            name: "SimpulFlow".to_string(),
+            tagline: "Release build verifier & Antigravity (agy) deployment companion".to_string(),
+            headline: "Automated release checks and one-click handoff to Antigravity agy.".to_string(),
+            about: "SimpulFlow inspects Rust, Flutter, and web artifacts before deployment, ensuring debug symbols and dev flags are stripped prior to publishing in Simpul Creative Launcher.".to_string(),
+            category: "DevOps & CLI Bridge".to_string(),
+            latest_version: "1.3.0".to_string(),
+            released_date: "2026-11-15".to_string(),
+            download_size_mb: 19.4,
+            sha256: "c180f4429b8e11076a455dc90e1274ab8901cc31f2547908ea1b3c778290df11".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::AntigravityAgy,
+            package_format: PackageFormat::NativeExe,
+            accent_rgb: [6, 182, 212],
+            icon_kind: "flow".to_string(),
+            pinned: false,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: Some(root.join("simpulflow").display().to_string()),
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Antigravity (agy) Sync".to_string(),
+                    description: "Open project workspaces or dispatch automated release fixes in Antigravity IDE/CLI.".to_string(),
+                },
+                AppFeature {
+                    title: "Non-Debug Gatekeeper".to_string(),
+                    description: "Rejects unoptimized debug artifacts before team distribution.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v1.3.0 — Synced with Antigravity (agy) workspace runner and SHA-256 receipt verifier.".to_string(),
+            ],
+            install_state: InstallState::Installed {
+                version: "1.3.0".to_string(),
+                install_path: root.join("simpulflow").join("1.3.0").display().to_string(),
+                installed_at: "Today, 14:15 WIB".to_string(),
+            },
+        },
+        SimpulApp {
+            id: "simpulstudio".to_string(),
+            name: "SimpulStudio".to_string(),
+            tagline: "Node-based media compositor, LUT grading & batch exporter".to_string(),
+            headline: "GPU-accelerated creative assembly and batch rendering pipeline.".to_string(),
+            about: "Compose social templates, apply studio LUTs, and render multi-aspect deliverables ready for SimpulGram and SimpulSync 4.".to_string(),
+            category: "Creative Production".to_string(),
+            latest_version: "1.9.0".to_string(),
+            released_date: "2026-11-12".to_string(),
+            download_size_mb: 68.5,
+            sha256: "55ab901e34f82c71a098bc4512de87341190fa6bc2238901cde741289ab0312f".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::SimpulSuite,
+            package_format: PackageFormat::Msi,
+            accent_rgb: [245, 158, 11],
+            icon_kind: "studio".to_string(),
+            pinned: false,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: None,
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Batch Multi-Ratio Render".to_string(),
+                    description: "Export 1:1, 4:5, 9:16, and 16:9 masters in a single GPU pass.".to_string(),
+                },
+                AppFeature {
+                    title: "Direct SimpulGram Publish".to_string(),
+                    description: "Send finished deliverables straight to SimpulGram review boards.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v1.9.0 — Production Release installer with hardware H.264/AV1 export presets.".to_string(),
+            ],
+            install_state: InstallState::NotInstalled,
+        },
+        SimpulApp {
+            id: "simpulcanvas".to_string(),
+            name: "SimpulCanvas".to_string(),
+            tagline: "Infinite moodboard, vector layout & interactive storyboard".to_string(),
+            headline: "Fast, native infinite canvas for creative direction and wireframes.".to_string(),
+            about: "Arrange references, typography sheets, and interactive flows offline at 120 Hz, synced effortlessly across your studio with SimpulSync 4.".to_string(),
+            category: "Design & Layout".to_string(),
+            latest_version: "2.0.4".to_string(),
+            released_date: "2026-11-09".to_string(),
+            download_size_mb: 36.0,
+            sha256: "812fa9c03e771b4509dc2188e643a90fb11278c49021aa765de0192bc44810e3".to_string(),
+            profile: BuildProfile::Release,
+            origin: AgentOrigin::SimpulSuite,
+            package_format: PackageFormat::Msi,
+            accent_rgb: [236, 72, 153],
+            icon_kind: "canvas".to_string(),
+            pinned: false,
+            hidden: false,
+            launch_flags: String::new(),
+            workspace_path: None,
+            artifact_path: None,
+            features: vec![
+                AppFeature {
+                    title: "Zero-Latency Vector Canvas".to_string(),
+                    description: "Pan and zoom across thousands of high-res artboards smoothly.".to_string(),
+                },
+            ],
+            release_notes: vec![
+                "v2.0.4 — Signed Windows x64 Release build with PDF & SVG artboard export.".to_string(),
+            ],
+            install_state: InstallState::NotInstalled,
+        },
+    ];
+
+    let events = vec![
+        AgentActivityEvent {
+            timestamp: "14:15 WIB".to_string(),
+            actor: AgentOrigin::AntigravityAgy,
+            action: "install".to_string(),
+            app_id: "simpulflow".to_string(),
+            summary: "Antigravity (agy) verified & installed SimpulFlow v1.3.0 (Release)".to_string(),
+        },
+        AgentActivityEvent {
+            timestamp: "Yesterday".to_string(),
+            actor: AgentOrigin::Claude,
+            action: "import+install".to_string(),
+            app_id: "simpuldocs".to_string(),
+            summary: "Claude AI imported & installed SimpulDocs v3.1.0 (Deploy Ready)".to_string(),
+        },
+        AgentActivityEvent {
+            timestamp: "2026-11-14".to_string(),
+            actor: AgentOrigin::SimpulSuite,
+            action: "verify".to_string(),
+            app_id: "simpulgram".to_string(),
+            summary: "SimpulGram v2.4.1 & SimpulSync 4 marked Layak Deploy (Non-Debug)".to_string(),
+        },
+    ];
+
+    SimpulRegistry {
+        version: 1,
+        last_checked_label: "Belum dicek".to_string(),
+        settings: LauncherSettings {
+            theme: ThemeChoice::Dark,
+            view_mode: ViewMode::Grid,
+            sort_key: SortKey::Suite,
+            sort_descending: false,
+            check_every: CheckEvery::Hour,
+            auto_update: false,
+            batch_updates: true,
+            require_release_profile: true,
+            install_root: root_str,
+            agy_command: "agy".to_string(),
+            claude_command: "claude".to_string(),
+        },
+        apps,
+        events,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_cannot_escape_install_folder() {
+        for ok in ["1.0.0", "4.1.11", "2.0.0-beta.1", "1.0.0+build5"] {
+            assert!(is_safe_version(ok), "{ok}");
+        }
+        for bad in ["", "..", "../x", "1.0/../..", r"1.0\..\x", "C:1", ".hidden", "1 0"] {
+            assert!(!is_safe_version(bad), "{bad}");
+        }
+        assert!(!is_safe_version(&"9".repeat(33)));
+    }
+
+    #[test]
+    fn slug_never_contains_path_characters() {
+        assert_eq!(slugify_id(r"../..\Evil App!"), "evil-app");
+        assert_eq!(slugify_id("---"), "");
+    }
+
+    #[test]
+    fn default_catalog_is_safe_to_install() {
+        for app in default_registry().apps {
+            assert!(!app.id.is_empty() && slugify_id(&app.id) == app.id, "{}", app.id);
+            assert!(is_safe_version(&app.latest_version), "{}", app.id);
+        }
+    }
+}

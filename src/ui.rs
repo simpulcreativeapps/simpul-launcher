@@ -1,0 +1,2765 @@
+use std::fs;
+use std::path::PathBuf;
+use std::time::SystemTime;
+
+use eframe::egui::{
+    self, Align, Color32, FontId, Frame, Layout, Margin, Pos2, Rect, RichText, ScrollArea, Sense,
+    Stroke, StrokeKind, TextEdit, TextureHandle, TextureOptions, Vec2,
+};
+
+use crate::icons::{paint_app_icon, paint_simpul_brand_mark};
+use crate::models::{
+    compute_feed_backoff_secs, ActiveInstallTask, AgentOrigin, BuildProfile, CheckEvery, FilterTab,
+    InstallState, QueueStage, SimpulApp, SimpulRegistry, SortKey, ThemeChoice,
+    ToolIntegrationStatus, ViewMode, BADGE_PILL_HEIGHT, CARD_CORNER_RADIUS, CARD_GRID_SPACING,
+    CARD_HOVER_ANIM_SECS, CARD_HOVER_TINT_FACTOR, CARD_ICON_SIZE, CARD_INNER_PADDING,
+    CARD_MIN_WIDTH, CONTROL_CORNER_RADIUS, DEFAULT_WINDOW_WIDTH, DRAWER_ANIM_SECS,
+    DRAWER_MAX_WIDTH, DRAWER_MIN_WIDTH, FONT_BODY, FONT_CAPTION, FONT_CARD_TITLE, FONT_HEADING,
+    FONT_MICRO, HEADER_MARK_SIZE, HERO_ICON_SIZE, LIVE_SYNC_POLL_SECS, PRIMARY_BTN_HEIGHT,
+    SCREENSHOT_WARMUP_FRAMES, SECONDARY_BTN_HEIGHT, TOAST_ERROR_DURATION_SECS,
+    TOAST_INFO_DURATION_SECS, TOAST_OFFSET_X, TOAST_OFFSET_Y, TOAST_WIDTH, TOOLBAR_CONTROL_HEIGHT,
+    UI_ZOOM_MAX, UI_ZOOM_MIN, UI_ZOOM_STEP,
+};
+use crate::registry::{
+    current_launchable_target, detect_integrations, detect_profile_from_path, import_into_registry,
+    install_in_registry, load_or_init_registry, open_install_folder,
+    reconcile_installed_apps, registry_mtime, save_registry, set_app_executable_path,
+    split_launch_flags, try_open_in_agent, uninstall_in_registry, ImportRequest,
+};
+use crate::suite::{self, GuardHub, GuardSnapshot};
+
+mod suite_ui;
+
+const SIMPUL_ICON_BYTES: &[u8] = include_bytes!("../assets/simpul-icon.png");
+const SIMPUL_SPLASH_BYTES: &[u8] = include_bytes!("../assets/simpul-splash.png");
+const SIMPUL_HERO_BYTES: &[u8] = include_bytes!("../assets/simpul-hero-banner.png");
+
+const INITIAL_SPLASH_FRAMES: u32 = 48;
+
+struct BrandTextures {
+    icon: Option<TextureHandle>,
+    splash: Option<TextureHandle>,
+    hero: Option<TextureHandle>,
+}
+
+impl BrandTextures {
+    fn load(ctx: &egui::Context) -> Self {
+        Self {
+            icon: decode_png_texture(ctx, "simpul_official_icon", SIMPUL_ICON_BYTES),
+            splash: decode_png_texture(ctx, "simpul_official_splash", SIMPUL_SPLASH_BYTES),
+            hero: decode_png_texture(ctx, "simpul_official_hero", SIMPUL_HERO_BYTES),
+        }
+    }
+}
+
+fn decode_png_texture(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<TextureHandle> {
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    let color_img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw());
+    Some(ctx.load_texture(name, color_img, TextureOptions::LINEAR))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RightDrawer {
+    None,
+    AppDetails(String),
+    AgentHub,
+}
+
+#[derive(Debug, Clone)]
+struct ToastMessage {
+    text: String,
+    is_error: bool,
+    created_at: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ImportFormState {
+    open: bool,
+    path_input: String,
+    name_input: String,
+    version_input: String,
+    tagline_input: String,
+    category_input: String,
+    origin: AgentOrigin,
+    auto_install: bool,
+    allow_debug_override: bool,
+    error_banner: Option<String>,
+}
+
+impl Default for ImportFormState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            path_input: "./examples/capr-notebook.json".to_string(),
+            name_input: String::new(),
+            version_input: "1.0.0".to_string(),
+            tagline_input: String::new(),
+            category_input: "Simpul Suite".to_string(),
+            origin: AgentOrigin::Claude,
+            auto_install: true,
+            allow_debug_override: false,
+            error_banner: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Palette {
+    bg_canvas: Color32,
+    bg_header: Color32,
+    bg_card: Color32,
+    bg_card_hover: Color32,
+    bg_elevated: Color32,
+    bg_subtle: Color32,
+    border: Color32,
+    border_strong: Color32,
+    ink_primary: Color32,
+    ink_secondary: Color32,
+    ink_muted: Color32,
+    accent: Color32,
+    accent_soft: Color32,
+    emerald: Color32,
+    emerald_soft: Color32,
+    amber: Color32,
+    amber_soft: Color32,
+    purple: Color32,
+    purple_soft: Color32,
+    cyan: Color32,
+    cyan_soft: Color32,
+    danger: Color32,
+}
+
+impl Palette {
+    fn for_theme(dark: bool) -> Self {
+        if dark {
+            Self {
+                bg_canvas: Color32::from_rgb(10, 11, 17),
+                bg_header: Color32::from_rgb(14, 16, 25),
+                bg_card: Color32::from_rgb(18, 20, 31),
+                bg_card_hover: Color32::from_rgb(24, 27, 42),
+                bg_elevated: Color32::from_rgb(26, 29, 44),
+                bg_subtle: Color32::from_rgb(31, 35, 52),
+                border: Color32::from_rgb(40, 45, 68),
+                border_strong: Color32::from_rgb(82, 102, 176),
+                ink_primary: Color32::from_rgb(242, 243, 248),
+                ink_secondary: Color32::from_rgb(182, 188, 212),
+                ink_muted: Color32::from_rgb(126, 134, 162),
+                accent: Color32::from_rgb(78, 123, 251),
+                accent_soft: Color32::from_rgba_unmultiplied(78, 123, 251, 38),
+                emerald: Color32::from_rgb(34, 197, 94),
+                emerald_soft: Color32::from_rgba_unmultiplied(16, 185, 129, 34),
+                amber: Color32::from_rgb(245, 158, 11),
+                amber_soft: Color32::from_rgba_unmultiplied(245, 158, 11, 34),
+                purple: Color32::from_rgb(192, 132, 252),
+                purple_soft: Color32::from_rgba_unmultiplied(168, 85, 247, 38),
+                cyan: Color32::from_rgb(56, 189, 248),
+                cyan_soft: Color32::from_rgba_unmultiplied(56, 189, 248, 36),
+                danger: Color32::from_rgb(239, 68, 68),
+            }
+        } else {
+            Self {
+                bg_canvas: Color32::from_rgb(245, 244, 248),
+                bg_header: Color32::from_rgb(252, 252, 255),
+                bg_card: Color32::from_rgb(255, 255, 255),
+                bg_card_hover: Color32::from_rgb(248, 250, 255),
+                bg_elevated: Color32::from_rgb(238, 240, 248),
+                bg_subtle: Color32::from_rgb(230, 234, 245),
+                border: Color32::from_rgb(214, 219, 232),
+                border_strong: Color32::from_rgb(120, 140, 210),
+                ink_primary: Color32::from_rgb(17, 19, 28),
+                ink_secondary: Color32::from_rgb(66, 72, 92),
+                ink_muted: Color32::from_rgb(112, 120, 142),
+                accent: Color32::from_rgb(56, 102, 238),
+                accent_soft: Color32::from_rgba_unmultiplied(56, 102, 238, 26),
+                emerald: Color32::from_rgb(15, 148, 80),
+                emerald_soft: Color32::from_rgba_unmultiplied(16, 185, 129, 28),
+                amber: Color32::from_rgb(198, 114, 6),
+                amber_soft: Color32::from_rgba_unmultiplied(245, 158, 11, 28),
+                purple: Color32::from_rgb(134, 58, 218),
+                purple_soft: Color32::from_rgba_unmultiplied(168, 85, 247, 26),
+                cyan: Color32::from_rgb(8, 138, 168),
+                cyan_soft: Color32::from_rgba_unmultiplied(6, 182, 212, 26),
+                danger: Color32::from_rgb(210, 44, 44),
+            }
+        }
+    }
+}
+
+pub struct SimpulLauncherApp {
+    textures: BrandTextures,
+    splash_frames_left: u32,
+    splash_total_frames: u32,
+
+    registry: SimpulRegistry,
+    ephemeral: bool,
+    screenshot_target: Option<PathBuf>,
+    screenshot_requested: bool,
+    screenshot_saved: bool,
+    frame_counter: u32,
+
+    filter: FilterTab,
+    search_query: String,
+    drawer: RightDrawer,
+    settings_open: bool,
+    uninstall_confirm_id: Option<String>,
+    launch_options_app_id: Option<String>,
+    launch_options_draft: String,
+    launch_options_err: Option<String>,
+    exec_path_app_id: Option<String>,
+    exec_path_draft: String,
+    import_form: ImportFormState,
+
+    queue: Vec<ActiveInstallTask>,
+    toasts: Vec<ToastMessage>,
+    integrations: ToolIntegrationStatus,
+    last_mtime: Option<SystemTime>,
+    last_poll_secs: f64,
+    last_frame_secs: Option<f64>,
+    ui_zoom: f32,
+
+    egui_ctx: egui::Context,
+    guard: GuardHub,
+    guard_snap: GuardSnapshot,
+    guard_seen_gen: u64,
+    guard_next_check: f64,
+    guard_user_asked: bool,
+    about_open: bool,
+    donate_open: bool,
+    donate_agree: bool,
+    donate_sent: bool,
+    supporter: bool,
+    bug_open: bool,
+    bug_text: String,
+    bug_include_log: bool,
+}
+
+impl SimpulLauncherApp {
+    pub fn new(ctx: &egui::Context, screenshot_target: Option<PathBuf>) -> Self {
+        let ephemeral = screenshot_target.is_some();
+        let registry = load_or_init_registry(ephemeral);
+        let integrations = detect_integrations(&registry.settings);
+        let last_mtime = if ephemeral { None } else { registry_mtime() };
+        let textures = BrandTextures::load(ctx);
+        let shot_view = if ephemeral {
+            std::env::var("SIMPUL_SHOT_VIEW").unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        Self {
+            textures,
+            splash_frames_left: if shot_view == "badge" { 400 } else { INITIAL_SPLASH_FRAMES },
+            splash_total_frames: if shot_view == "badge" { 800 } else { INITIAL_SPLASH_FRAMES },
+            registry,
+            ephemeral,
+            screenshot_target,
+            screenshot_requested: false,
+            screenshot_saved: false,
+            frame_counter: 0,
+            filter: FilterTab::All,
+            search_query: String::new(),
+            drawer: RightDrawer::None,
+            settings_open: false,
+            uninstall_confirm_id: None,
+            launch_options_app_id: None,
+            launch_options_draft: String::new(),
+            launch_options_err: None,
+            exec_path_app_id: None,
+            exec_path_draft: String::new(),
+            import_form: ImportFormState::default(),
+            queue: Vec::new(),
+            toasts: Vec::new(),
+            integrations,
+            last_mtime,
+            last_poll_secs: 0.0,
+            last_frame_secs: None,
+            ui_zoom: 1.0,
+            egui_ctx: ctx.clone(),
+            guard: GuardHub::default(),
+            guard_snap: GuardSnapshot::default(),
+            guard_seen_gen: 0,
+            guard_next_check: 0.0,
+            guard_user_asked: false,
+            // Mode tangkapan layar: SIMPUL_SHOT_VIEW memilih jendela yang ditampilkan.
+            about_open: shot_view == "about",
+            donate_open: shot_view == "donate",
+            donate_agree: false,
+            donate_sent: false,
+            supporter: if ephemeral { shot_view == "badge" || shot_view == "about" } else { suite::is_supporter() },
+            bug_open: shot_view == "bug",
+            bug_text: String::new(),
+            bug_include_log: false,
+        }
+    }
+
+    fn persist(&mut self) {
+        if !self.ephemeral {
+            let _ = save_registry(&self.registry);
+            self.last_mtime = registry_mtime();
+        }
+    }
+
+    fn handle_zoom_shortcuts(&mut self, ctx: &egui::Context) {
+        let mut delta = 0.0_f32;
+        let mut reset = false;
+        ctx.input(|i| {
+            if i.modifiers.command {
+                if i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals) {
+                    delta += UI_ZOOM_STEP;
+                }
+                if i.key_pressed(egui::Key::Minus) {
+                    delta -= UI_ZOOM_STEP;
+                }
+                if i.key_pressed(egui::Key::Num0) {
+                    reset = true;
+                }
+            }
+        });
+        if reset {
+            self.ui_zoom = 1.0;
+            ctx.set_zoom_factor(self.ui_zoom);
+        } else if delta.abs() > f32::EPSILON {
+            self.ui_zoom = (self.ui_zoom + delta).clamp(UI_ZOOM_MIN, UI_ZOOM_MAX);
+            ctx.set_zoom_factor(self.ui_zoom);
+        }
+    }
+
+    fn push_toast(&mut self, now: f64, text: impl Into<String>, is_error: bool) {
+        self.toasts.push(ToastMessage {
+            text: text.into(),
+            is_error,
+            created_at: now,
+        });
+        if self.toasts.len() > 4 {
+            self.toasts.remove(0);
+        }
+    }
+
+    fn enqueue_install(&mut self, now: f64, app_id: &str, actor: AgentOrigin) {
+        let ctx = self.egui_ctx.clone();
+        if self.guard_handles_install(&ctx, now, app_id) {
+            return;
+        }
+        if self.queue.iter().any(|q| q.app_id == app_id) {
+            return;
+        }
+        let Some(app) = self.registry.apps.iter().find(|a| a.id == app_id) else {
+            return;
+        };
+        if self.registry.settings.require_release_profile && app.profile == BuildProfile::Debug {
+            let msg = format!(
+                "Deploy Gate: {} adalah Debug build (hanya Release layak deploy yang diizinkan).",
+                app.name
+            );
+            self.push_toast(now, msg, true);
+            return;
+        }
+        let stage = if self.queue.is_empty() {
+            QueueStage::Downloading { progress: 0.04 }
+        } else {
+            QueueStage::Queued
+        };
+        let target_version = app.latest_version.clone();
+        let total_mb = app.download_size_mb;
+        let app_name = app.name.clone();
+        self.queue.push(ActiveInstallTask {
+            app_id: app_id.to_string(),
+            target_version: target_version.clone(),
+            total_mb,
+            stage,
+            paused: false,
+            actor,
+        });
+        self.push_toast(
+            now,
+            format!("Queued {} v{} ({})", app_name, target_version, actor.label()),
+            false,
+        );
+    }
+
+    fn tick_queue(&mut self, dt: f32, now: f64) {
+        if self.queue.is_empty() {
+            return;
+        }
+        if matches!(self.queue[0].stage, QueueStage::Queued) {
+            self.queue[0].stage = QueueStage::Downloading { progress: 0.02 };
+        }
+        if self.queue[0].paused {
+            return;
+        }
+
+        let mut finished = false;
+        match &mut self.queue[0].stage {
+            QueueStage::Queued => {}
+            QueueStage::Downloading { progress } => {
+                *progress += dt * 0.65;
+                if *progress >= 1.0 {
+                    self.queue[0].stage = QueueStage::VerifyingChecksum { progress: 0.0 };
+                }
+            }
+            QueueStage::VerifyingChecksum { progress } => {
+                *progress += dt * 1.4;
+                if *progress >= 1.0 {
+                    self.queue[0].stage = QueueStage::Installing { progress: 0.0 };
+                }
+            }
+            QueueStage::Installing { progress } => {
+                *progress += dt * 1.1;
+                if *progress >= 1.0 {
+                    finished = true;
+                }
+            }
+        }
+
+        if finished {
+            let done_task = self.queue.remove(0);
+            if self.ephemeral {
+                if let Some(app) = self
+                    .registry
+                    .apps
+                    .iter_mut()
+                    .find(|a| a.id == done_task.app_id)
+                {
+                    app.install_state = InstallState::Installed {
+                        version: done_task.target_version.clone(),
+                        install_path: format!("apps\\{}\\{}", app.id, done_task.target_version),
+                        installed_at: "Just now".to_string(),
+                    };
+                    let msg = format!(
+                        "{} terpasang: v{}",
+                        app.name, done_task.target_version
+                    );
+                    self.push_toast(now, msg, false);
+                }
+            } else {
+                match install_in_registry(
+                    &mut self.registry,
+                    &done_task.app_id,
+                    done_task.actor,
+                    false,
+                ) {
+                    Ok(updated) => {
+                        self.persist();
+                        self.push_toast(
+                            now,
+                            format!(
+                                "{} v{} terpasang",
+                                updated.name, updated.latest_version
+                            ),
+                            false,
+                        );
+                    }
+                    Err(e) => {
+                        self.push_toast(now, e, true);
+                    }
+                }
+            }
+        }
+    }
+
+    fn poll_external_cli_changes(&mut self, now: f64) {
+        if self.ephemeral || (now - self.last_poll_secs) < LIVE_SYNC_POLL_SECS {
+            return;
+        }
+        self.last_poll_secs = now;
+        let current_mtime = registry_mtime();
+        if current_mtime.is_some() && current_mtime != self.last_mtime {
+            self.last_mtime = current_mtime;
+            let prev_event = self.registry.events.first().map(|e| e.summary.clone());
+            self.registry = load_or_init_registry(false);
+            self.integrations = detect_integrations(&self.registry.settings);
+            if let Some(latest) = self.registry.events.first() {
+                if Some(latest.summary.as_str()) != prev_event.as_deref() {
+                    let note = latest.summary.clone();
+                    self.push_toast(now, format!("Live Sync: {note}"), false);
+                }
+            }
+        }
+    }
+
+    fn apply_visuals(&self, ctx: &egui::Context) -> Palette {
+        let dark = match self.registry.settings.theme {
+            ThemeChoice::Dark => true,
+            ThemeChoice::Light => false,
+            ThemeChoice::System => ctx.style().visuals.dark_mode,
+        };
+        let pal = Palette::for_theme(dark);
+        let mut visuals = if dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        visuals.panel_fill = pal.bg_canvas;
+        visuals.window_fill = pal.bg_card;
+        visuals.extreme_bg_color = pal.bg_header;
+        visuals.faint_bg_color = pal.bg_subtle;
+        visuals.override_text_color = Some(pal.ink_primary);
+        visuals.selection.bg_fill = pal.accent;
+        visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        visuals.widgets.noninteractive.bg_fill = pal.bg_card;
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, pal.border);
+        visuals.widgets.inactive.bg_fill = pal.bg_elevated;
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, pal.border);
+        visuals.widgets.inactive.corner_radius = CONTROL_CORNER_RADIUS.into();
+        visuals.widgets.hovered.bg_fill = pal.bg_subtle;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, pal.accent);
+        visuals.widgets.hovered.corner_radius = CONTROL_CORNER_RADIUS.into();
+        visuals.widgets.active.bg_fill = pal.accent;
+        visuals.widgets.active.corner_radius = CONTROL_CORNER_RADIUS.into();
+        ctx.set_visuals(visuals);
+        pal
+    }
+
+    fn filtered_indices(&self) -> Vec<usize> {
+        let q = self.search_query.trim().to_ascii_lowercase();
+        let mut indices: Vec<usize> = self
+            .registry
+            .apps
+            .iter()
+            .enumerate()
+            .filter(|(_, app)| {
+                if self.filter == FilterTab::Hidden {
+                    if !app.hidden {
+                        return false;
+                    }
+                } else if app.hidden {
+                    return false;
+                }
+
+                let tab_ok = match self.filter {
+                    FilterTab::All => true,
+                    FilterTab::DeployReady => app.profile.is_deploy_ready(),
+                    FilterTab::Installed => app.install_state.is_installed(),
+                    FilterTab::Updates => app.has_update(),
+                    FilterTab::AgentImported => matches!(
+                        app.origin,
+                        AgentOrigin::Claude | AgentOrigin::AntigravityAgy | AgentOrigin::CliManual
+                    ),
+                    FilterTab::Hidden => app.hidden,
+                };
+                if !tab_ok {
+                    return false;
+                }
+                if q.is_empty() {
+                    return true;
+                }
+                app.name.to_ascii_lowercase().contains(&q)
+                    || app.id.to_ascii_lowercase().contains(&q)
+                    || app.tagline.to_ascii_lowercase().contains(&q)
+                    || app.category.to_ascii_lowercase().contains(&q)
+                    || app.origin.label().to_ascii_lowercase().contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        indices.sort_by(|&a_idx, &b_idx| {
+            let a = &self.registry.apps[a_idx];
+            let b = &self.registry.apps[b_idx];
+            match (a.pinned, b.pinned) {
+                (true, false) => return std::cmp::Ordering::Less,
+                (false, true) => return std::cmp::Ordering::Greater,
+                _ => {}
+            }
+            let ord = match self.registry.settings.sort_key {
+                SortKey::Suite => a_idx.cmp(&b_idx),
+                SortKey::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                SortKey::Status => {
+                    let rank = |x: &SimpulApp| {
+                        if x.has_update() {
+                            0
+                        } else if x.install_state.is_installed() {
+                            1
+                        } else {
+                            2
+                        }
+                    };
+                    rank(a).cmp(&rank(b))
+                }
+                SortKey::Newest => b.released_date.cmp(&a.released_date),
+            };
+            if self.registry.settings.sort_descending {
+                ord.reverse()
+            } else {
+                ord
+            }
+        });
+
+        indices
+    }
+
+    fn draw_splash_screen(&mut self, ctx: &egui::Context) {
+        let progress = 1.0
+            - (self.splash_frames_left as f32 / self.splash_total_frames.max(1) as f32)
+                .clamp(0.0, 1.0);
+
+        egui::CentralPanel::default()
+            .frame(Frame::new().fill(Color32::from_rgb(6, 7, 17)).inner_margin(Margin::ZERO))
+            .show(ctx, |ui| {
+                let full_rect = ui.max_rect();
+                if let Some(ref splash_tex) = self.textures.splash {
+                    // Aspect-cover draw of the official Simpul cosmic splash banner
+                    ui.painter().image(
+                        splash_tex.id(),
+                        full_rect,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                }
+
+                // Sleek loading progress bar & status caption near bottom of splash screen
+                let bar_w = 380.0;
+                let bar_h = 6.0;
+                let center_x = full_rect.center().x;
+                let bar_y = full_rect.bottom() - 78.0;
+                let bar_rect =
+                    Rect::from_min_size(Pos2::new(center_x - bar_w * 0.5, bar_y), Vec2::new(bar_w, bar_h));
+
+                ui.painter().rect_filled(
+                    bar_rect,
+                    3.0,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 32),
+                );
+                let mut fill_rect = bar_rect;
+                fill_rect.set_width((bar_w * progress.clamp(0.06, 1.0)).max(12.0));
+                ui.painter()
+                    .rect_filled(fill_rect, 3.0, Color32::from_rgb(96, 145, 255));
+
+                if self.supporter {
+                    ui.painter().text(
+                        Pos2::new(center_x, bar_y - 28.0),
+                        egui::Align2::CENTER_CENTER,
+                        "♥  You are awesome!  Terima kasih sudah mendukung Simpul",
+                        FontId::proportional(15.0),
+                        Color32::from_rgb(180, 226, 107),
+                    );
+                }
+
+                let step_label = if progress < 0.38 {
+                    "Membuka Simpul Creative Launcher…"
+                } else if progress < 0.74 {
+                    "Memuat katalog aplikasi…"
+                } else {
+                    "Menyiapkan CLI dan jembatan agen…"
+                };
+
+                ui.painter().text(
+                    Pos2::new(center_x, bar_y + 22.0),
+                    egui::Align2::CENTER_CENTER,
+                    step_label,
+                    FontId::proportional(13.0),
+                    Color32::from_rgb(186, 196, 232),
+                );
+
+                // Allow clicking anywhere to dismiss splash immediately
+                if ui.interact(full_rect, egui::Id::new("splash_skip"), Sense::click()).clicked() {
+                    self.splash_frames_left = 0;
+                }
+            });
+
+        self.splash_frames_left = self.splash_frames_left.saturating_sub(1);
+        ctx.request_repaint();
+    }
+
+    fn draw_official_brand_mark(&self, ui: &mut egui::Ui, size: f32) {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+        if let Some(ref icon_tex) = self.textures.icon {
+            ui.painter().image(
+                icon_tex.id(),
+                rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        } else {
+            paint_simpul_brand_mark(ui.painter(), rect);
+        }
+    }
+
+    fn handle_screenshot_lifecycle(&mut self, ctx: &egui::Context) {
+        let Some(ref target_path) = self.screenshot_target.clone() else {
+            return;
+        };
+
+        ctx.request_repaint();
+
+        let events = ctx.input(|i| i.raw.events.clone());
+        for ev in events {
+            if let egui::Event::Screenshot { image, .. } = ev {
+                if !self.screenshot_saved {
+                    if let Some(parent) = target_path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                    }
+                    let [w, h] = image.size;
+                    let mut rgba = Vec::with_capacity(w * h * 4);
+                    for px in &image.pixels {
+                        rgba.extend_from_slice(&px.to_srgba_unmultiplied());
+                    }
+                    if let Err(e) = image::save_buffer_with_format(
+                        target_path,
+                        &rgba,
+                        w as u32,
+                        h as u32,
+                        image::ColorType::Rgba8,
+                        image::ImageFormat::Png,
+                    ) {
+                        eprintln!("Failed saving screenshot to {}: {e}", target_path.display());
+                    }
+                    self.screenshot_saved = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    return;
+                }
+            }
+        }
+
+        self.frame_counter = self.frame_counter.saturating_add(1);
+        if self.frame_counter >= SCREENSHOT_WARMUP_FRAMES && !self.screenshot_requested {
+            self.screenshot_requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        } else if self.frame_counter > SCREENSHOT_WARMUP_FRAMES + 60 && !self.screenshot_saved {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+    }
+
+    fn draw_header(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
+        let update_count = self.registry.apps.iter().filter(|a| a.has_update()).count();
+
+        ui.horizontal(|ui| {
+            ui.set_min_height(TOOLBAR_CONTROL_HEIGHT);
+
+            // Simpul brand mark
+            self.draw_official_brand_mark(ui, HEADER_MARK_SIZE + 4.0);
+
+            ui.add_space(6.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Simpul")
+                            .size(18.5)
+                            .strong()
+                            .color(pal.ink_primary),
+                    );
+                    draw_pill(
+                        ui,
+                        "Creative Apps Launcher",
+                        pal.accent_soft,
+                        pal.accent,
+                        FONT_MICRO,
+                    );
+                });
+                ui.label(
+                    RichText::new("Deploy-Ready Suite (SimpulGram • SimpulSync 4 • Capr) + CLI • agy • Claude")
+                        .size(FONT_MICRO)
+                        .color(pal.ink_muted),
+                );
+            });
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 7.0;
+
+                let settings_btn = egui::Button::new(
+                    RichText::new("⚙ Settings")
+                        .size(FONT_CAPTION)
+                        .color(pal.ink_primary),
+                )
+                .min_size(Vec2::new(82.0, SECONDARY_BTN_HEIGHT))
+                .fill(pal.bg_elevated);
+                if ui.add(settings_btn).clicked() {
+                    self.settings_open = true;
+                }
+                self.draw_suite_header_buttons(ui, pal);
+
+                // Replay Splash / Loading Screen button
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("✨ Splash")
+                                .size(FONT_CAPTION)
+                                .color(pal.ink_secondary),
+                        )
+                        .min_size(Vec2::new(70.0, SECONDARY_BTN_HEIGHT))
+                        .fill(pal.bg_elevated),
+                    )
+                    .on_hover_text("Preview Simpul Splash & Loading Screen")
+                    .clicked()
+                {
+                    self.splash_total_frames = 80;
+                    self.splash_frames_left = 80;
+                }
+
+                let theme_label = match self.registry.settings.theme {
+                    ThemeChoice::Dark => "🌙 Dark",
+                    ThemeChoice::Light => "☀ Light",
+                    ThemeChoice::System => "◐ Auto",
+                };
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(theme_label)
+                                .size(FONT_CAPTION)
+                                .color(pal.ink_secondary),
+                        )
+                        .min_size(Vec2::new(66.0, SECONDARY_BTN_HEIGHT))
+                        .fill(pal.bg_elevated),
+                    )
+                    .clicked()
+                {
+                    self.registry.settings.theme = match self.registry.settings.theme {
+                        ThemeChoice::Dark => ThemeChoice::Light,
+                        ThemeChoice::Light => ThemeChoice::Dark,
+                        ThemeChoice::System => ThemeChoice::Dark,
+                    };
+                    self.persist();
+                }
+
+                if update_count > 0 {
+                    let upd_btn = egui::Button::new(
+                        RichText::new(format!("Update all ({update_count})"))
+                            .size(FONT_CAPTION)
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .min_size(Vec2::new(108.0, SECONDARY_BTN_HEIGHT))
+                    .fill(pal.accent);
+                    if ui.add(upd_btn).clicked() {
+                        let ids: Vec<String> = self
+                            .registry
+                            .apps
+                            .iter()
+                            .filter(|a| a.has_update())
+                            .map(|a| a.id.clone())
+                            .collect();
+                        for id in ids {
+                            self.enqueue_install(now, &id, AgentOrigin::SimpulSuite);
+                        }
+                    }
+                } else {
+                    let chk_btn = egui::Button::new(
+                        RichText::new("↻ Check updates")
+                            .size(FONT_CAPTION)
+                            .color(pal.ink_primary),
+                    )
+                    .min_size(Vec2::new(108.0, SECONDARY_BTN_HEIGHT))
+                    .fill(pal.bg_elevated);
+                    if ui.add(chk_btn).clicked() {
+                        self.integrations = detect_integrations(&self.registry.settings);
+                        let ctx = ui.ctx().clone();
+                        self.start_guard_check(&ctx, true);
+                        self.push_toast(now, "Memeriksa pembaruan…", false);
+                    }
+                }
+
+                let hub_active = matches!(self.drawer, RightDrawer::AgentHub);
+                let hub_btn = egui::Button::new(
+                    RichText::new("⚡ CLI • agy • Claude")
+                        .size(FONT_CAPTION)
+                        .strong()
+                        .color(if hub_active {
+                            Color32::WHITE
+                        } else {
+                            pal.cyan
+                        }),
+                )
+                .min_size(Vec2::new(134.0, SECONDARY_BTN_HEIGHT))
+                .fill(if hub_active { pal.accent } else { pal.cyan_soft })
+                .stroke(Stroke::new(1.0_f32, pal.cyan));
+                if ui.add(hub_btn).clicked() {
+                    self.drawer = if hub_active {
+                        RightDrawer::None
+                    } else {
+                        RightDrawer::AgentHub
+                    };
+                }
+            });
+        });
+    }
+
+    fn draw_hero_banner_and_bridge(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
+        // Official Simpul Cosmic Banner + Integrated Claude/agy Quick Actions
+        Frame::new()
+            .fill(Color32::from_rgb(8, 9, 22))
+            .stroke(Stroke::new(1.2_f32, pal.border_strong))
+            .corner_radius(CARD_CORNER_RADIUS)
+            .inner_margin(Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Left side: Official Simpul Hero Banner artwork (aspect-preserved 4.04:1)
+                    let banner_h: f32 = 84.0;
+                    let banner_w = (banner_h * (1080.0 / 267.0)).min(ui.available_width() * 0.44);
+                    let (b_rect, b_resp) =
+                        ui.allocate_exact_size(Vec2::new(banner_w, banner_h), Sense::click());
+                    if let Some(ref hero_tex) = self.textures.hero {
+                        ui.painter().image(
+                            hero_tex.id(),
+                            b_rect,
+                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                    if b_resp
+                        .on_hover_text("Click to replay full-screen Simpul Splash Screen")
+                        .clicked()
+                    {
+                        self.splash_total_frames = 80;
+                        self.splash_frames_left = 80;
+                    }
+
+                    ui.add_space(12.0);
+
+                    // Right side: Live CLI + Antigravity (agy) + Claude Bridge & Deploy Gate
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            draw_pill(
+                                ui,
+                                "Release Gate (No Debug)",
+                                pal.emerald_soft,
+                                Color32::from_rgb(74, 222, 128),
+                                FONT_MICRO,
+                            );
+                            draw_pill(
+                                ui,
+                                if self.integrations.claude_detected {
+                                    "Claude CLI Connected"
+                                } else {
+                                    "Claude Import Bridge"
+                                },
+                                pal.purple_soft,
+                                Color32::from_rgb(216, 180, 254),
+                                FONT_MICRO,
+                            );
+                            draw_pill(
+                                ui,
+                                if self.integrations.agy_detected {
+                                    "Antigravity (agy) Connected"
+                                } else {
+                                    "Antigravity (agy) Ready"
+                                },
+                                pal.cyan_soft,
+                                Color32::from_rgb(103, 232, 249),
+                                FONT_MICRO,
+                            );
+                        });
+
+                        ui.label(
+                            RichText::new(
+                                "Claude & Antigravity (agy) dapat mengimport & menginstall software Simpul layak deploy (SimpulGram, SimpulSync 4, Capr, dll.) langsung ke launcher ini.",
+                            )
+                            .size(FONT_CAPTION)
+                            .color(Color32::from_rgb(206, 212, 236)),
+                        );
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let imp_btn = egui::Button::new(
+                                RichText::new("+ Import & Install App")
+                                    .size(FONT_CAPTION)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .min_size(Vec2::new(146.0, 28.0))
+                            .fill(pal.accent);
+                            if ui.add(imp_btn).clicked() {
+                                self.import_form.open = true;
+                                self.import_form.error_banner = None;
+                            }
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Scan PC")
+                                            .size(FONT_MICRO)
+                                            .strong()
+                                            .color(Color32::from_rgb(134, 239, 172)),
+                                    )
+                                    .min_size(Vec2::new(84.0, 28.0))
+                                    .fill(Color32::from_rgb(20, 44, 38)),
+                                )
+                                .on_hover_text(
+                                    "Pindai ulang SimpulGram, SimpulSync 4, Capr & aplikasi Simpul yang terinstall di PC ini",
+                                )
+                                .clicked()
+                            {
+                                let updated = reconcile_installed_apps(&mut self.registry);
+                                self.persist();
+                                let linked_cnt = self
+                                    .registry
+                                    .apps
+                                    .iter()
+                                    .filter(|a| current_launchable_target(a).is_some())
+                                    .count();
+                                if updated.is_empty() {
+                                    self.push_toast(
+                                        now,
+                                        format!("Scan selesai: {linked_cnt} aplikasi terinstall siap dibuka."),
+                                        false,
+                                    );
+                                } else {
+                                    self.push_toast(
+                                        now,
+                                        format!(
+                                            "Scan selesai: {} aplikasi diperbarui ({linked_cnt} siap dibuka).",
+                                            updated.len()
+                                        ),
+                                        false,
+                                    );
+                                }
+                            }
+
+                            let copy_cmd =
+                                "simpul-creative-launcher import ./simpul-app.json --agent claude --install";
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("📋 Copy Claude CLI Command")
+                                            .size(FONT_MICRO)
+                                            .color(Color32::from_rgb(232, 236, 252)),
+                                    )
+                                    .min_size(Vec2::new(164.0, 28.0))
+                                    .fill(Color32::from_rgb(24, 28, 48)),
+                                )
+                                .on_hover_text(copy_cmd)
+                                .clicked()
+                            {
+                                ui.ctx().copy_text(copy_cmd.to_string());
+                                self.push_toast(
+                                    now,
+                                    "Copied Claude import & install CLI command.",
+                                    false,
+                                );
+                            }
+                        });
+                    });
+                });
+            });
+    }
+
+    fn draw_toolbar(&mut self, ui: &mut egui::Ui, pal: Palette) {
+        let total_visible = self.registry.apps.iter().filter(|a| !a.hidden).count();
+        let deploy_cnt = self
+            .registry
+            .apps
+            .iter()
+            .filter(|a| !a.hidden && a.profile.is_deploy_ready())
+            .count();
+        let inst_cnt = self
+            .registry
+            .apps
+            .iter()
+            .filter(|a| !a.hidden && a.install_state.is_installed())
+            .count();
+        let upd_cnt = self
+            .registry
+            .apps
+            .iter()
+            .filter(|a| !a.hidden && a.has_update())
+            .count();
+        let agent_cnt = self
+            .registry
+            .apps
+            .iter()
+            .filter(|a| {
+                !a.hidden
+                    && matches!(
+                        a.origin,
+                        AgentOrigin::Claude | AgentOrigin::AntigravityAgy | AgentOrigin::CliManual
+                    )
+            })
+            .count();
+        let hidden_cnt = self.registry.apps.iter().filter(|a| a.hidden).count();
+
+        ui.horizontal(|ui| {
+            ui.set_min_height(34.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
+
+            let mut tabs = vec![
+                (FilterTab::All, format!("All ({total_visible})")),
+                (FilterTab::DeployReady, format!("Deploy Ready ({deploy_cnt})")),
+                (FilterTab::Installed, format!("Installed ({inst_cnt})")),
+                (FilterTab::Updates, format!("Updates ({upd_cnt})")),
+                (FilterTab::AgentImported, format!("Claude & agy ({agent_cnt})")),
+            ];
+            if hidden_cnt > 0 || self.filter == FilterTab::Hidden {
+                tabs.push((FilterTab::Hidden, format!("Hidden ({hidden_cnt})")));
+            }
+
+            for (tab, label) in tabs {
+                let selected = self.filter == tab;
+                let btn = egui::Button::new(
+                    RichText::new(label)
+                        .size(FONT_CAPTION)
+                        .strong()
+                        .color(if selected {
+                            Color32::WHITE
+                        } else {
+                            pal.ink_secondary
+                        }),
+                )
+                .min_size(Vec2::new(0.0, SECONDARY_BTN_HEIGHT))
+                .fill(if selected { pal.accent } else { pal.bg_card })
+                .stroke(Stroke::new(
+                    1.0_f32,
+                    if selected { pal.accent } else { pal.border },
+                ));
+                if ui.add(btn).clicked() {
+                    self.filter = tab;
+                }
+            }
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+
+                let is_table = self.registry.settings.view_mode == ViewMode::Table;
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("☰ Table").size(FONT_CAPTION).color(if is_table {
+                                Color32::WHITE
+                            } else {
+                                pal.ink_secondary
+                            }),
+                        )
+                        .min_size(Vec2::new(62.0, SECONDARY_BTN_HEIGHT))
+                        .fill(if is_table { pal.accent } else { pal.bg_card }),
+                    )
+                    .clicked()
+                {
+                    self.registry.settings.view_mode = ViewMode::Table;
+                    self.persist();
+                }
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("⊞ Grid")
+                                .size(FONT_CAPTION)
+                                .color(if !is_table {
+                                    Color32::WHITE
+                                } else {
+                                    pal.ink_secondary
+                                }),
+                        )
+                        .min_size(Vec2::new(60.0, SECONDARY_BTN_HEIGHT))
+                        .fill(if !is_table { pal.accent } else { pal.bg_card }),
+                    )
+                    .clicked()
+                {
+                    self.registry.settings.view_mode = ViewMode::Grid;
+                    self.persist();
+                }
+
+                egui::ComboBox::from_id_salt("simpul_sort_combo")
+                    .width(122.0)
+                    .selected_text(
+                        RichText::new(self.registry.settings.sort_key.label()).size(FONT_CAPTION),
+                    )
+                    .show_ui(ui, |ui| {
+                        for key in [
+                            SortKey::Suite,
+                            SortKey::Name,
+                            SortKey::Status,
+                            SortKey::Newest,
+                        ] {
+                            if ui
+                                .selectable_value(
+                                    &mut self.registry.settings.sort_key,
+                                    key,
+                                    key.label(),
+                                )
+                                .changed()
+                            {
+                                self.persist();
+                            }
+                        }
+                    });
+
+                let search_edit = TextEdit::singleline(&mut self.search_query)
+                    .hint_text("🔍 Search SimpulGram, SimpulSync 4, Capr…")
+                    .desired_width(215.0)
+                    .font(FontId::proportional(FONT_CAPTION));
+                ui.add_sized([215.0, SECONDARY_BTN_HEIGHT], search_edit);
+            });
+        });
+    }
+
+    fn draw_cards_grid(&mut self, ui: &mut egui::Ui, indices: &[usize], pal: Palette, now: f64) {
+        let avail_w = ui.available_width().max(CARD_MIN_WIDTH);
+        // Column count rule verified from sub_1402fd1d0: floor(available_width / 320.0).max(1)
+        let cols = ((avail_w / CARD_MIN_WIDTH).floor() as usize).clamp(1, 3);
+        let card_w =
+            ((avail_w - CARD_GRID_SPACING * (cols.saturating_sub(1) as f32)) / cols as f32)
+                .max(240.0);
+
+        for chunk in indices.chunks(cols) {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = CARD_GRID_SPACING;
+                for &idx in chunk {
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(card_w, 0.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            self.draw_single_card(ui, idx, card_w, pal, now);
+                        },
+                    );
+                }
+            });
+            ui.add_space(CARD_GRID_SPACING);
+        }
+    }
+
+    fn draw_single_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        idx: usize,
+        card_w: f32,
+        pal: Palette,
+        now: f64,
+    ) {
+        let app = self.registry.apps[idx].clone();
+        let is_selected = matches!(&self.drawer, RightDrawer::AppDetails(id) if id == &app.id);
+        let active_task = self.queue.iter().find(|q| q.app_id == app.id).cloned();
+
+        let hover_id = egui::Id::new(("card_hover_state", &app.id));
+        let was_hovered = ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(hover_id))
+            .unwrap_or(false);
+        let hover_t = ui
+            .ctx()
+            .animate_bool_with_time(egui::Id::new(("card-hover", &app.id)), was_hovered, CARD_HOVER_ANIM_SECS);
+        let tint_alpha = (hover_t * CARD_HOVER_TINT_FACTOR * 255.0).round() as u8;
+        let fill_col = if hover_t > 0.01 {
+            Color32::from_rgb(
+                pal.bg_card_hover.r().saturating_add(tint_alpha / 3),
+                pal.bg_card_hover.g().saturating_add(tint_alpha / 3),
+                pal.bg_card_hover.b().saturating_add(tint_alpha / 2),
+            )
+        } else {
+            pal.bg_card
+        };
+        let stroke_color = if is_selected {
+            pal.accent
+        } else if was_hovered {
+            pal.border_strong
+        } else {
+            pal.border
+        };
+
+        let inner = Frame::new()
+            .fill(fill_col)
+            .stroke(Stroke::new(
+                if is_selected { 1.6_f32 } else { 1.0_f32 },
+                stroke_color,
+            ))
+            .corner_radius(CARD_CORNER_RADIUS)
+            .inner_margin(Margin::same(CARD_INNER_PADDING))
+            .show(ui, |ui| {
+                ui.set_max_width((card_w - 34.0).max(200.0));
+                ui.set_min_width((card_w - 34.0).max(200.0));
+                ui.set_min_height(166.0);
+
+                ui.horizontal(|ui| {
+                    let (icon_rect, icon_resp) =
+                        ui.allocate_exact_size(Vec2::splat(CARD_ICON_SIZE), Sense::click());
+                    paint_app_icon(ui.painter(), icon_rect, &app.icon_kind, app.accent_rgb);
+                    if icon_resp.clicked() {
+                        self.drawer = RightDrawer::AppDetails(app.id.clone());
+                    }
+
+                    ui.add_space(6.0);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.horizontal(|ui| {
+                            let title_resp = ui.add(
+                                egui::Label::new(
+                                    RichText::new(&app.name)
+                                        .size(FONT_CARD_TITLE)
+                                        .strong()
+                                        .color(pal.ink_primary),
+                                )
+                                .sense(Sense::click()),
+                            );
+                            if title_resp.clicked() {
+                                self.drawer = RightDrawer::AppDetails(app.id.clone());
+                            }
+                            if app.pinned {
+                                draw_pill(ui, "Core", pal.accent_soft, pal.accent, 10.0);
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            let (p_bg, p_fg) = match app.profile {
+                                BuildProfile::Release => (pal.emerald_soft, pal.emerald),
+                                BuildProfile::Staging => (pal.amber_soft, pal.amber),
+                                BuildProfile::Debug => (
+                                    Color32::from_rgba_unmultiplied(239, 68, 68, 35),
+                                    pal.danger,
+                                ),
+                            };
+                            draw_pill(ui, app.profile.short_label(), p_bg, p_fg, 10.5);
+
+                            let (o_bg, o_fg) = match app.origin {
+                                AgentOrigin::Claude => (pal.purple_soft, pal.purple),
+                                AgentOrigin::AntigravityAgy => (pal.cyan_soft, pal.cyan),
+                                AgentOrigin::SimpulSuite => (pal.bg_subtle, pal.ink_secondary),
+                                AgentOrigin::CliManual => (pal.emerald_soft, pal.emerald),
+                            };
+                            draw_pill(ui, app.origin.label(), o_bg, o_fg, 10.5);
+                        });
+                    });
+                });
+
+                ui.add_space(7.0);
+                ui.label(
+                    RichText::new(&app.tagline)
+                        .size(FONT_CAPTION)
+                        .color(pal.ink_secondary),
+                );
+
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    let status_str = match &app.install_state {
+                        InstallState::Installed { version, .. } => {
+                            if app.has_update() {
+                                format!("v{version} installed • v{} ready", app.latest_version)
+                            } else {
+                                format!("v{version} installed • Up to date")
+                            }
+                        }
+                        InstallState::NotInstalled => {
+                            format!(
+                                "Latest v{} • {:.1} MB",
+                                app.latest_version, app.download_size_mb
+                            )
+                        }
+                    };
+                    let status_col = if app.has_update() {
+                        pal.amber
+                    } else if app.install_state.is_installed() {
+                        pal.emerald
+                    } else {
+                        pal.ink_muted
+                    };
+                    ui.label(RichText::new(status_str).size(FONT_MICRO).color(status_col));
+                });
+
+                ui.add_space(8.0);
+
+                if let Some(task) = active_task {
+                    let (label, frac) = match task.stage {
+                        QueueStage::Queued => ("Waiting for other installs…".to_string(), 0.05),
+                        QueueStage::Downloading { progress } => (
+                            format!(
+                                "Downloading {:.1} / {:.1} MB",
+                                task.total_mb * progress.min(1.0),
+                                task.total_mb
+                            ),
+                            progress * 0.65,
+                        ),
+                        QueueStage::VerifyingChecksum { progress } => (
+                            "Verifying SHA-256 checksum…".to_string(),
+                            0.65 + progress * 0.18,
+                        ),
+                        QueueStage::Installing { progress } => (
+                            format!("Installing v{}…", task.target_version),
+                            0.83 + progress * 0.17,
+                        ),
+                    };
+                    ui.label(RichText::new(label).size(FONT_MICRO).color(pal.accent));
+                    ui.add_space(3.0);
+                    ui.horizontal(|ui| {
+                        let bar_w = (ui.available_width() - 62.0).max(80.0);
+                        let (bar_rect, _) =
+                            ui.allocate_exact_size(Vec2::new(bar_w, 8.0), Sense::hover());
+                        ui.painter().rect_filled(bar_rect, 4.0, pal.bg_subtle);
+                        let mut fill_rect = bar_rect;
+                        fill_rect.set_width(bar_rect.width() * frac.clamp(0.03, 1.0));
+                        ui.painter().rect_filled(fill_rect, 4.0, pal.accent);
+
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Cancel").size(FONT_MICRO))
+                                    .min_size(Vec2::new(54.0, 22.0)),
+                            )
+                            .clicked()
+                        {
+                            self.queue.retain(|q| q.app_id != app.id);
+                            self.push_toast(now, format!("Cancelled {}", app.name), false);
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+
+                        match &app.install_state {
+                            InstallState::Installed { version, .. } => {
+                                if app.has_update() {
+                                    let upd_btn = egui::Button::new(
+                                        RichText::new(format!("Update to {}", app.latest_version))
+                                            .size(FONT_CAPTION)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    )
+                                    .min_size(Vec2::new(114.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.accent);
+                                    if ui.add(upd_btn).clicked() {
+                                        self.enqueue_install(
+                                            now,
+                                            &app.id,
+                                            AgentOrigin::SimpulSuite,
+                                        );
+                                    }
+
+                                    let open_old = egui::Button::new(
+                                        RichText::new(format!("Open {version}"))
+                                            .size(FONT_CAPTION)
+                                            .color(pal.ink_primary),
+                                    )
+                                    .min_size(Vec2::new(72.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.bg_elevated);
+                                    if ui.add(open_old).clicked() {
+                                        self.launch_app(now, &app);
+                                    }
+                                } else {
+                                    let open_btn = egui::Button::new(
+                                        RichText::new("Open")
+                                            .size(FONT_BODY)
+                                            .strong()
+                                            .color(Color32::WHITE),
+                                    )
+                                    .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.accent);
+                                    if ui.add(open_btn).clicked() {
+                                        self.launch_app(now, &app);
+                                    }
+                                }
+                            }
+                            InstallState::NotInstalled => {
+                                let inst_btn = egui::Button::new(
+                                    RichText::new("Install")
+                                        .size(FONT_BODY)
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                )
+                                .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
+                                .fill(pal.bg_elevated)
+                                .stroke(Stroke::new(1.2_f32, pal.accent));
+                                if ui.add(inst_btn).clicked() {
+                                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                                }
+                            }
+                        }
+
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.menu_button(
+                                RichText::new("•••").size(FONT_MICRO).color(pal.ink_secondary),
+                                |ui| {
+                                    ui.set_min_width(190.0);
+                                    if ui.button("App details & release notes").clicked() {
+                                        self.drawer = RightDrawer::AppDetails(app.id.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("Open workspace in Antigravity (agy)").clicked() {
+                                        let ws = app.workspace_path.clone().unwrap_or_else(|| {
+                                            self.registry.settings.install_root.clone()
+                                        });
+                                        match try_open_in_agent(
+                                            &self.registry.settings.agy_command,
+                                            &ws,
+                                        ) {
+                                            Ok(m) => self.push_toast(now, m, false),
+                                            Err(_) => {
+                                                let cmd = format!(
+                                                    "{} \"{}\"",
+                                                    self.registry.settings.agy_command, ws
+                                                );
+                                                ui.ctx().copy_text(cmd.clone());
+                                                self.push_toast(
+                                                    now,
+                                                    format!("Copied agy command: {cmd}"),
+                                                    false,
+                                                );
+                                            }
+                                        }
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("Copy Claude CLI install command").clicked() {
+                                        let cmd = format!(
+                                            "simpul-creative-launcher install {} --agent claude",
+                                            app.id
+                                        );
+                                        ui.ctx().copy_text(cmd.clone());
+                                        self.push_toast(now, format!("Copied: {cmd}"), false);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("Launch options…").clicked() {
+                                        self.launch_options_app_id = Some(app.id.clone());
+                                        self.launch_options_draft = app.launch_flags.clone();
+                                        self.launch_options_err = None;
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    let pin_lbl = if app.pinned { "Unpin" } else { "Pin to top" };
+                                    if ui.button(pin_lbl).clicked() {
+                                        self.registry.apps[idx].pinned = !app.pinned;
+                                        self.persist();
+                                        ui.close_menu();
+                                    }
+                                    let hide_lbl =
+                                        if app.hidden { "Unhide App" } else { "Hide App" };
+                                    if ui.button(hide_lbl).clicked() {
+                                        self.registry.apps[idx].hidden = !app.hidden;
+                                        self.persist();
+                                        ui.close_menu();
+                                    }
+                                    if app.install_state.is_installed() {
+                                        ui.separator();
+                                        if ui.button("Reinstall").clicked() {
+                                            self.enqueue_install(
+                                                now,
+                                                &app.id,
+                                                AgentOrigin::SimpulSuite,
+                                            );
+                                            ui.close_menu();
+                                        }
+                                        if ui
+                                            .button(RichText::new("Uninstall…").color(pal.danger))
+                                            .clicked()
+                                        {
+                                            self.uninstall_confirm_id = Some(app.id.clone());
+                                            ui.close_menu();
+                                        }
+                                    }
+                                },
+                            );
+
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Details")
+                                            .size(FONT_CAPTION)
+                                            .color(pal.ink_secondary),
+                                    )
+                                    .min_size(Vec2::new(56.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.bg_elevated),
+                                )
+                                .clicked()
+                            {
+                                self.drawer = RightDrawer::AppDetails(app.id.clone());
+                            }
+                        });
+                    });
+                }
+            });
+
+        let hovered_now = inner.response.hovered();
+        ui.ctx().data_mut(|d| d.insert_temp(hover_id, hovered_now));
+    }
+
+    fn draw_table_view(&mut self, ui: &mut egui::Ui, indices: &[usize], pal: Palette, now: f64) {
+        Frame::new()
+            .fill(pal.bg_card)
+            .stroke(Stroke::new(1.0_f32, pal.border))
+            .corner_radius(CARD_CORNER_RADIUS)
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                egui::Grid::new("simpul_apps_table")
+                    .num_columns(6)
+                    .spacing([18.0, 10.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for col in [
+                            "App",
+                            "Build Gate",
+                            "Origin / Agent",
+                            "Installed",
+                            "Latest",
+                            "Action",
+                        ] {
+                            ui.label(
+                                RichText::new(col)
+                                    .size(FONT_MICRO)
+                                    .strong()
+                                    .color(pal.ink_muted),
+                            );
+                        }
+                        ui.end_row();
+
+                        for &idx in indices {
+                            let app = self.registry.apps[idx].clone();
+                            ui.horizontal(|ui| {
+                                let (ir, _) =
+                                    ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                                paint_app_icon(ui.painter(), ir, &app.icon_kind, app.accent_rgb);
+                                if ui
+                                    .link(
+                                        RichText::new(&app.name)
+                                            .size(FONT_BODY)
+                                            .strong()
+                                            .color(pal.ink_primary),
+                                    )
+                                    .clicked()
+                                {
+                                    self.drawer = RightDrawer::AppDetails(app.id.clone());
+                                }
+                            });
+
+                            draw_pill(
+                                ui,
+                                app.profile.short_label(),
+                                pal.emerald_soft,
+                                pal.emerald,
+                                FONT_MICRO,
+                            );
+                            ui.label(
+                                RichText::new(app.origin.label())
+                                    .size(FONT_CAPTION)
+                                    .color(pal.ink_secondary),
+                            );
+                            ui.label(
+                                RichText::new(
+                                    app.install_state.installed_version().unwrap_or("—"),
+                                )
+                                .size(FONT_CAPTION)
+                                .color(pal.ink_secondary),
+                            );
+                            ui.label(
+                                RichText::new(format!("v{}", app.latest_version))
+                                    .size(FONT_CAPTION)
+                                    .color(pal.ink_primary),
+                            );
+
+                            ui.horizontal(|ui| {
+                                if app.has_update() {
+                                    if ui.button("Update").clicked() {
+                                        self.enqueue_install(
+                                            now,
+                                            &app.id,
+                                            AgentOrigin::SimpulSuite,
+                                        );
+                                    }
+                                } else if app.install_state.is_installed() {
+                                    if ui.button("Open").clicked() {
+                                        self.launch_app(now, &app);
+                                    }
+                                } else if ui.button("Install").clicked() {
+                                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    });
+            });
+    }
+
+    fn draw_right_drawer(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
+        let is_open = self.drawer != RightDrawer::None;
+        let open_t = ctx.animate_bool_with_time(
+            egui::Id::new("details-drawer-anim"),
+            is_open,
+            DRAWER_ANIM_SECS,
+        );
+        if !is_open || open_t <= 0.01 {
+            return;
+        }
+        let target_w = ((ctx.screen_rect().width() * 0.36).clamp(DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH)
+            * open_t)
+            .max(120.0);
+
+        egui::SidePanel::right("details-drawer")
+            .resizable(true)
+            .default_width(target_w)
+            .width_range(DRAWER_MIN_WIDTH..=DRAWER_MAX_WIDTH)
+            .frame(
+                Frame::new()
+                    .fill(pal.bg_header)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .inner_margin(Margin::same(18)),
+            )
+            .show(ctx, |ui| match self.drawer.clone() {
+                RightDrawer::None => {}
+                RightDrawer::AppDetails(app_id) => {
+                    self.draw_app_details_drawer(ui, &app_id, pal, now);
+                }
+                RightDrawer::AgentHub => {
+                    self.draw_agent_hub_drawer(ui, pal, now);
+                }
+            });
+    }
+
+    fn draw_app_details_drawer(
+        &mut self,
+        ui: &mut egui::Ui,
+        app_id: &str,
+        pal: Palette,
+        now: f64,
+    ) {
+        let Some(app) = self.registry.apps.iter().find(|a| a.id == app_id).cloned() else {
+            self.drawer = RightDrawer::None;
+            return;
+        };
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("App details")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_muted),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("✕ Close (Esc)").clicked() {
+                    self.drawer = RightDrawer::None;
+                }
+            });
+        });
+        ui.add_space(10.0);
+
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (hero_rect, _) =
+                    ui.allocate_exact_size(Vec2::splat(HERO_ICON_SIZE), Sense::hover());
+                paint_app_icon(ui.painter(), hero_rect, &app.icon_kind, app.accent_rgb);
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(&app.name)
+                            .size(FONT_HEADING)
+                            .strong()
+                            .color(pal.ink_primary),
+                    );
+                    ui.label(
+                        RichText::new(&app.category)
+                            .size(FONT_CAPTION)
+                            .color(pal.ink_secondary),
+                    );
+                    ui.add_space(4.0);
+                    draw_pill(
+                        ui,
+                        app.profile.label(),
+                        pal.emerald_soft,
+                        pal.emerald,
+                        FONT_MICRO,
+                    );
+                });
+            });
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new(&app.headline)
+                    .size(FONT_BODY)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(&app.about)
+                    .size(FONT_CAPTION)
+                    .color(pal.ink_secondary),
+            );
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if app.install_state.is_installed() {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Open Application")
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
+                            .fill(pal.accent),
+                        )
+                        .clicked()
+                    {
+                        self.launch_app(now, &app);
+                    }
+                    if app.has_update()
+                        && ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!("Update to {}", app.latest_version))
+                                        .color(pal.amber),
+                                )
+                                .min_size(Vec2::new(112.0, PRIMARY_BTN_HEIGHT)),
+                            )
+                            .clicked()
+                    {
+                        self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                    }
+                } else if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(format!("Install v{}", app.latest_version))
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
+                        .fill(pal.accent),
+                    )
+                    .clicked()
+                {
+                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                }
+            });
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            ui.label(
+                RichText::new("AI & CLI Integration")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("🚀 Open in Antigravity (agy)").clicked() {
+                    let ws = app
+                        .workspace_path
+                        .clone()
+                        .unwrap_or_else(|| self.registry.settings.install_root.clone());
+                    match try_open_in_agent(&self.registry.settings.agy_command, &ws) {
+                        Ok(m) => self.push_toast(now, m, false),
+                        Err(_) => {
+                            let cmd = format!("{} \"{}\"", self.registry.settings.agy_command, ws);
+                            ui.ctx().copy_text(cmd.clone());
+                            self.push_toast(now, format!("Copied agy command: {cmd}"), false);
+                        }
+                    }
+                }
+                if ui.button("🤖 Copy Claude Install CLI").clicked() {
+                    let cmd = format!(
+                        "simpul-creative-launcher install {} --agent claude",
+                        app.id
+                    );
+                    ui.ctx().copy_text(cmd.clone());
+                    self.push_toast(now, format!("Copied: {cmd}"), false);
+                }
+            });
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Installed Executable")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.add_space(4.0);
+            let resolved_exe = current_launchable_target(&app);
+            if self.exec_path_app_id.as_deref() != Some(app.id.as_str()) {
+                self.exec_path_app_id = Some(app.id.clone());
+                self.exec_path_draft = resolved_exe
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .or_else(|| match &app.install_state {
+                        InstallState::Installed { install_path, .. } => Some(install_path.clone()),
+                        InstallState::NotInstalled => None,
+                    })
+                    .unwrap_or_default();
+            }
+            if let Some(ref exe_p) = resolved_exe {
+                ui.label(
+                    RichText::new(format!("Ready: {}", exe_p.display()))
+                        .size(FONT_MICRO)
+                        .monospace()
+                        .color(pal.emerald),
+                );
+            } else {
+                ui.label(
+                    RichText::new("Executable .exe belum tertaut di komputer ini.")
+                        .size(FONT_MICRO)
+                        .color(pal.amber),
+                );
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    TextEdit::singleline(&mut self.exec_path_draft)
+                        .desired_width((ui.available_width() - 96.0).max(120.0))
+                        .hint_text("C:\\Path\\To\\App.exe"),
+                );
+                if ui.button("Link .exe").clicked() {
+                    let draft = self.exec_path_draft.clone();
+                    match set_app_executable_path(&mut self.registry, &app.id, &draft) {
+                        Ok(msg) => {
+                            self.persist();
+                            self.push_toast(now, msg, false);
+                        }
+                        Err(err) => self.push_toast(now, err, true),
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                if let Some(ref exe_p) = resolved_exe {
+                    if ui.button("Open Install Folder").clicked() {
+                        match open_install_folder(&exe_p.display().to_string()) {
+                            Ok(m) => self.push_toast(now, m, false),
+                            Err(e) => self.push_toast(now, e, true),
+                        }
+                    }
+                }
+                if ui.button("Rescan PC").clicked() {
+                    let updated = reconcile_installed_apps(&mut self.registry);
+                    self.persist();
+                    self.exec_path_app_id = None;
+                    self.push_toast(
+                        now,
+                        if updated.is_empty() {
+                            "Scan PC selesai — semua path sudah sinkron.".to_string()
+                        } else {
+                            format!("Scan PC selesai — {} pembaruan ditemukan.", updated.len())
+                        },
+                        false,
+                    );
+                }
+            });
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Package & Integrity")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(format!(
+                    "Format: {} • Size: {:.1} MB • Released: {}",
+                    app.package_format.label(),
+                    app.download_size_mb,
+                    app.released_date
+                ))
+                .size(FONT_MICRO)
+                .color(pal.ink_secondary),
+            );
+            ui.label(
+                RichText::new(format!("SHA-256: {}…", &app.sha256[..app.sha256.len().min(24)]))
+                    .size(FONT_MICRO)
+                    .monospace()
+                    .color(pal.ink_muted),
+            );
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Key Features")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.add_space(4.0);
+            for feat in &app.features {
+                Frame::new()
+                    .fill(pal.bg_card)
+                    .corner_radius(8.0)
+                    .inner_margin(Margin::same(9))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            RichText::new(&feat.title)
+                                .size(FONT_CAPTION)
+                                .strong()
+                                .color(pal.ink_primary),
+                        );
+                        ui.label(
+                            RichText::new(&feat.description)
+                                .size(FONT_MICRO)
+                                .color(pal.ink_secondary),
+                        );
+                    });
+                ui.add_space(6.0);
+            }
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("What's new")
+                    .size(FONT_CAPTION)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            for note in &app.release_notes {
+                ui.label(
+                    RichText::new(format!("• {note}"))
+                        .size(FONT_MICRO)
+                        .color(pal.ink_secondary),
+                );
+            }
+        });
+    }
+
+    fn draw_agent_hub_drawer(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("CLI • Antigravity (agy) • Claude Bridge")
+                    .size(FONT_BODY)
+                    .strong()
+                    .color(pal.ink_primary),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("✕ Close").clicked() {
+                    self.drawer = RightDrawer::None;
+                }
+            });
+        });
+        ui.add_space(8.0);
+
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Claude dan Antigravity (agy) terhubung langsung melalui CLI binary Simpul Creative Launcher. Setiap perintah `import` atau `install` memvalidasi build Release (bukan Debug) dan otomatis memperbarui daftar aplikasi secara live.",
+                )
+                .size(FONT_CAPTION)
+                .color(pal.ink_secondary),
+            );
+            ui.add_space(10.0);
+
+            Frame::new()
+                .fill(pal.bg_card)
+                .stroke(Stroke::new(1.0_f32, pal.border))
+                .corner_radius(8.0)
+                .inner_margin(Margin::same(10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new("Detected Agent Endpoints")
+                            .size(FONT_CAPTION)
+                            .strong(),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "• Antigravity (agy): {}",
+                            self.integrations
+                                .agy_path
+                                .as_deref()
+                                .unwrap_or("Ready via `agy` command")
+                        ))
+                        .size(FONT_MICRO)
+                        .color(pal.cyan),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "• Claude Code: {}",
+                            self.integrations
+                                .claude_path
+                                .as_deref()
+                                .unwrap_or("Ready via `claude` CLI bridge")
+                        ))
+                        .size(FONT_MICRO)
+                        .color(pal.purple),
+                    );
+                    ui.label(
+                        RichText::new(format!("• Registry JSON: {}", self.integrations.registry_path))
+                            .size(FONT_MICRO)
+                            .color(pal.ink_muted),
+                    );
+                });
+
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("1. Claude Import & Install Command")
+                    .size(FONT_CAPTION)
+                    .strong(),
+            );
+            let claude_snippet = format!(
+                "\"{}\" import ./simpul-app.json --agent claude --install --json",
+                self.integrations.cli_self_path
+            );
+            Frame::new()
+                .fill(pal.bg_card)
+                .corner_radius(6.0)
+                .inner_margin(Margin::same(8))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(&claude_snippet)
+                            .size(11.0)
+                            .monospace()
+                            .color(pal.purple),
+                    );
+                    if ui.small_button("📋 Copy for Claude").clicked() {
+                        ui.ctx().copy_text(claude_snippet);
+                        self.push_toast(now, "Copied Claude CLI command.", false);
+                    }
+                });
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("2. Antigravity (agy) Release Deploy Command")
+                    .size(FONT_CAPTION)
+                    .strong(),
+            );
+            let agy_snippet = format!(
+                "\"{}\" install ./target/release/simpul-app.exe --agent agy --json",
+                self.integrations.cli_self_path
+            );
+            Frame::new()
+                .fill(pal.bg_card)
+                .corner_radius(6.0)
+                .inner_margin(Margin::same(8))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(&agy_snippet)
+                            .size(11.0)
+                            .monospace()
+                            .color(pal.cyan),
+                    );
+                    if ui.small_button("📋 Copy for agy").clicked() {
+                        ui.ctx().copy_text(agy_snippet);
+                        self.push_toast(now, "Copied Antigravity (agy) CLI command.", false);
+                    }
+                });
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Recent Agent & CLI Activity")
+                        .size(FONT_CAPTION)
+                        .strong(),
+                );
+                if ui.small_button("+ Import via UI").clicked() {
+                    self.import_form.open = true;
+                }
+            });
+            ui.add_space(6.0);
+            for ev in &self.registry.events {
+                Frame::new()
+                    .fill(pal.bg_card)
+                    .corner_radius(6.0)
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(ev.actor.label())
+                                    .size(FONT_MICRO)
+                                    .strong()
+                                    .color(pal.accent),
+                            );
+                            ui.label(
+                                RichText::new(&ev.timestamp)
+                                    .size(10.0)
+                                    .color(pal.ink_muted),
+                            );
+                        });
+                        ui.label(
+                            RichText::new(&ev.summary)
+                                .size(FONT_MICRO)
+                                .color(pal.ink_secondary),
+                        );
+                    });
+                ui.add_space(5.0);
+            }
+        });
+    }
+
+    fn draw_modals(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.splash_frames_left > 0 {
+                self.splash_frames_left = 0;
+            } else if self.import_form.open {
+                self.import_form.open = false;
+            } else if self.settings_open {
+                self.settings_open = false;
+            } else if self.uninstall_confirm_id.is_some() {
+                self.uninstall_confirm_id = None;
+            } else if self.launch_options_app_id.is_some() {
+                self.launch_options_app_id = None;
+            } else {
+                self.drawer = RightDrawer::None;
+            }
+        }
+
+        if self.import_form.open {
+            let mut keep_open = true;
+            egui::Window::new("Import & Install Application to Simpul Launcher")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(460.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut keep_open)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new(
+                            "Tambahkan paket software Simpul baru (.msi, .exe, .zip, atau simpul-app.json). Secara default hanya build Release (layak deploy, bukan debug) yang diterima.",
+                        )
+                        .size(FONT_CAPTION)
+                        .color(pal.ink_secondary),
+                    );
+                    ui.add_space(8.0);
+
+                    let detected_prof = detect_profile_from_path(
+                        std::path::Path::new(&self.import_form.path_input),
+                        None,
+                    );
+
+                    egui::Grid::new("import_app_grid")
+                        .num_columns(2)
+                        .spacing([10.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label("Artifact / Manifest:");
+                            ui.add(
+                                TextEdit::singleline(&mut self.import_form.path_input)
+                                    .desired_width(300.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("App Name:");
+                            ui.add(
+                                TextEdit::singleline(&mut self.import_form.name_input)
+                                    .hint_text("e.g. Capr / SimpulRender Pro")
+                                    .desired_width(300.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Version:");
+                            ui.add(
+                                TextEdit::singleline(&mut self.import_form.version_input)
+                                    .desired_width(140.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Tagline:");
+                            ui.add(
+                                TextEdit::singleline(&mut self.import_form.tagline_input)
+                                    .hint_text("Short description of the tool")
+                                    .desired_width(300.0),
+                            );
+                            ui.end_row();
+
+                            ui.label("Imported By:");
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(
+                                    &mut self.import_form.origin,
+                                    AgentOrigin::Claude,
+                                    "Claude AI",
+                                );
+                                ui.selectable_value(
+                                    &mut self.import_form.origin,
+                                    AgentOrigin::AntigravityAgy,
+                                    "Antigravity (agy)",
+                                );
+                                ui.selectable_value(
+                                    &mut self.import_form.origin,
+                                    AgentOrigin::CliManual,
+                                    "Simpul CLI",
+                                );
+                            });
+                            ui.end_row();
+                        });
+
+                    ui.add_space(6.0);
+                    if detected_prof == BuildProfile::Debug {
+                        Frame::new()
+                            .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 32))
+                            .corner_radius(6.0)
+                            .inner_margin(Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "⚠ Path terdeteksi sebagai DEBUG build (`target/debug`). Gunakan artefak Release layak deploy (`target/release` atau `.msi`).",
+                                    )
+                                    .size(FONT_MICRO)
+                                    .color(pal.danger),
+                                );
+                                ui.checkbox(
+                                    &mut self.import_form.allow_debug_override,
+                                    "Allow debug build anyway (sandbox testing only)",
+                                );
+                            });
+                    } else {
+                        draw_pill(
+                            ui,
+                            "Detected Profile: RELEASE (Layak Deploy)",
+                            pal.emerald_soft,
+                            pal.emerald,
+                            FONT_MICRO,
+                        );
+                    }
+
+                    ui.add_space(4.0);
+                    ui.checkbox(
+                        &mut self.import_form.auto_install,
+                        "Install immediately into Simpul Launcher apps directory",
+                    );
+
+                    if let Some(ref err) = self.import_form.error_banner {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(err).size(FONT_MICRO).color(pal.danger));
+                    }
+
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        let submit_lbl = if self.import_form.auto_install {
+                            "Import & Install"
+                        } else {
+                            "Import to Catalog"
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(submit_lbl).strong().color(Color32::WHITE),
+                                )
+                                .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
+                                .fill(pal.accent),
+                            )
+                            .clicked()
+                        {
+                            let req = ImportRequest {
+                                source_path: PathBuf::from(self.import_form.path_input.trim()),
+                                id: None,
+                                name: if self.import_form.name_input.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(self.import_form.name_input.trim().to_string())
+                                },
+                                version: Some(self.import_form.version_input.trim().to_string()),
+                                tagline: if self.import_form.tagline_input.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(self.import_form.tagline_input.trim().to_string())
+                                },
+                                category: Some(self.import_form.category_input.clone()),
+                                agent: self.import_form.origin,
+                                allow_debug: self.import_form.allow_debug_override,
+                                auto_install: self.import_form.auto_install,
+                            };
+                            match import_into_registry(&mut self.registry, req) {
+                                Ok(added) => {
+                                    self.persist();
+                                    self.import_form.open = false;
+                                    self.import_form.error_banner = None;
+                                    self.push_toast(
+                                        now,
+                                        format!(
+                                            "{} imported {} v{} ({})",
+                                            added.origin.label(),
+                                            added.name,
+                                            added.latest_version,
+                                            added.profile.short_label()
+                                        ),
+                                        false,
+                                    );
+                                }
+                                Err(e) => {
+                                    self.import_form.error_banner = Some(e);
+                                }
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.import_form.open = false;
+                        }
+                    });
+                });
+            if !keep_open {
+                self.import_form.open = false;
+            }
+        }
+
+        if self.settings_open {
+            let mut open = true;
+            egui::Window::new("Simpul Creative Apps Launcher — Settings")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(470.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    let mut changed = false;
+                    ui.label(RichText::new("Deployment & Security Gate").strong());
+                    changed |= ui
+                        .checkbox(
+                            &mut self.registry.settings.require_release_profile,
+                            "Strict Deploy Gate — Hanya izinkan software Release (tolak Debug build)",
+                        )
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Default install folder").strong());
+                    changed |= ui
+                        .add(
+                            TextEdit::singleline(&mut self.registry.settings.install_root)
+                                .desired_width(430.0),
+                        )
+                        .changed();
+                    ui.label(
+                        RichText::new(
+                            "New installs from GUI, Claude, and agy use this folder. Existing installs keep their location.",
+                        )
+                        .size(FONT_MICRO)
+                        .color(pal.ink_muted),
+                    );
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Updates").strong());
+                    egui::ComboBox::from_id_salt("check_every_combo")
+                        .selected_text(self.registry.settings.check_every.label())
+                        .show_ui(ui, |ui| {
+                            for opt in [
+                                CheckEvery::Hour,
+                                CheckEvery::FourHours,
+                                CheckEvery::Day,
+                                CheckEvery::Never,
+                            ] {
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut self.registry.settings.check_every,
+                                        opt,
+                                        opt.label(),
+                                    )
+                                    .changed();
+                            }
+                        });
+                    changed |= ui
+                        .checkbox(
+                            &mut self.registry.settings.auto_update,
+                            "Automatically download and install updates",
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(
+                            &mut self.registry.settings.batch_updates,
+                            "Ask for permission once when updating all apps",
+                        )
+                        .changed();
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("CLI & Agent Binaries").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Antigravity CLI:");
+                        changed |= ui
+                            .text_edit_singleline(&mut self.registry.settings.agy_command)
+                            .changed();
+                        ui.label("Claude CLI:");
+                        changed |= ui
+                            .text_edit_singleline(&mut self.registry.settings.claude_command)
+                            .changed();
+                    });
+
+                    if changed {
+                        self.integrations = detect_integrations(&self.registry.settings);
+                        self.persist();
+                    }
+                });
+            if !open {
+                self.settings_open = false;
+            }
+        }
+
+        if let Some(target_id) = self.uninstall_confirm_id.clone() {
+            let app_name = self
+                .registry
+                .apps
+                .iter()
+                .find(|a| a.id == target_id)
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| target_id.clone());
+            egui::Window::new(format!("Uninstall {app_name}?"))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(380.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        "The application binary will be removed from Simpul Creative Launcher. Your creative documents and workspace settings stay safe.",
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Uninstall").strong().color(Color32::WHITE),
+                                )
+                                .fill(pal.danger),
+                            )
+                            .clicked()
+                        {
+                            if let Ok(removed) = uninstall_in_registry(
+                                &mut self.registry,
+                                &target_id,
+                                AgentOrigin::SimpulSuite,
+                            ) {
+                                self.persist();
+                                self.push_toast(now, format!("Uninstalled {removed}."), false);
+                            }
+                            self.uninstall_confirm_id = None;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.uninstall_confirm_id = None;
+                        }
+                    });
+                });
+        }
+
+        if let Some(target_id) = self.launch_options_app_id.clone() {
+            let app_name = self
+                .registry
+                .apps
+                .iter()
+                .find(|a| a.id == target_id)
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| target_id.clone());
+            egui::Window::new(format!("{app_name} launch options"))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(400.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new(
+                            "Flags added each time the app is opened. Separate flags with spaces; quote values containing spaces.",
+                        )
+                        .size(FONT_CAPTION)
+                        .color(pal.ink_secondary),
+                    );
+                    ui.add_space(6.0);
+                    ui.add(
+                        TextEdit::singleline(&mut self.launch_options_draft)
+                            .hint_text("--flag \"value\"")
+                            .desired_width(370.0),
+                    );
+                    if let Some(ref err) = self.launch_options_err {
+                        ui.label(RichText::new(err).size(FONT_MICRO).color(pal.danger));
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            match split_launch_flags(&self.launch_options_draft) {
+                                Ok(_) => {
+                                    if let Some(a) = self
+                                        .registry
+                                        .apps
+                                        .iter_mut()
+                                        .find(|a| a.id == target_id)
+                                    {
+                                        a.launch_flags =
+                                            self.launch_options_draft.trim().to_string();
+                                    }
+                                    self.persist();
+                                    self.launch_options_app_id = None;
+                                    self.launch_options_err = None;
+                                }
+                                Err(e) => {
+                                    self.launch_options_err = Some(e);
+                                }
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.launch_options_app_id = None;
+                        }
+                    });
+                });
+        }
+    }
+
+    fn draw_toasts(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
+        // Toast timing: 8.0s errors, 4.5s info, offset [-20, -46]
+        let _next_retry = compute_feed_backoff_secs(1, 0.5, None);
+        self.toasts.retain(|t| {
+            let max_age = if t.is_error {
+                TOAST_ERROR_DURATION_SECS
+            } else {
+                TOAST_INFO_DURATION_SECS
+            };
+            (now - t.created_at) < max_age
+        });
+        if self.toasts.is_empty() {
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+
+        egui::Area::new(egui::Id::new("simpul_toast_area"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, [TOAST_OFFSET_X, TOAST_OFFSET_Y])
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.set_width(TOAST_WIDTH);
+                for toast in &self.toasts {
+                    Frame::new()
+                        .fill(pal.bg_elevated)
+                        .stroke(Stroke::new(
+                            1.2_f32,
+                            if toast.is_error {
+                                pal.danger
+                            } else {
+                                pal.accent
+                            },
+                        ))
+                        .corner_radius(CONTROL_CORNER_RADIUS)
+                        .inner_margin(Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.set_width(TOAST_WIDTH - 26.0);
+                            ui.label(
+                                RichText::new(&toast.text)
+                                    .size(FONT_CAPTION)
+                                    .color(pal.ink_primary),
+                            );
+                        });
+                    ui.add_space(6.0);
+                }
+            });
+    }
+}
+
+impl eframe::App for SimpulLauncherApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let now = ctx.input(|i| i.time);
+        let dt = self
+            .last_frame_secs
+            .map(|prev| (now - prev).clamp(0.001, 0.1) as f32)
+            .unwrap_or(1.0 / 60.0);
+        self.last_frame_secs = Some(now);
+
+        let pal = self.apply_visuals(ctx);
+        self.handle_zoom_shortcuts(ctx);
+        self.poll_external_cli_changes(now);
+        self.sync_guard(ctx, now);
+
+        if !self.queue.is_empty() {
+            self.tick_queue(dt, now);
+            ctx.request_repaint();
+        }
+
+        if self.splash_frames_left > 0 {
+            self.draw_splash_screen(ctx);
+            self.handle_screenshot_lifecycle(ctx);
+            return;
+        }
+
+        if self.draw_discontinued(ctx, pal, now) {
+            self.draw_toasts(ctx, pal, now);
+            return;
+        }
+
+        egui::TopBottomPanel::top("simpul_header")
+            .frame(
+                Frame::new()
+                    .fill(pal.bg_header)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .inner_margin(Margin::symmetric(20, 8)),
+            )
+            .show(ctx, |ui| {
+                self.draw_header(ui, pal, now);
+            });
+
+        self.draw_notice_bar(ctx, pal, now);
+
+        egui::TopBottomPanel::bottom("simpul_footer")
+            .frame(
+                Frame::new()
+                    .fill(pal.bg_header)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .inner_margin(Margin::symmetric(20, 6)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "Simpul Creative Launcher v{} • {} • {} • Cek tiap: {}",
+                            suite::LAUNCHER_VERSION,
+                            suite::MAKER_DOMAIN,
+                            self.registry.last_checked_label,
+                            self.registry
+                                .settings
+                                .check_every
+                                .interval_secs()
+                                .map(|s| format!("{s}s"))
+                                .unwrap_or_else(|| "manual".to_string())
+                        ))
+                        .size(FONT_MICRO)
+                        .color(pal.ink_muted),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "Deploy-Ready Flagships: SimpulGram • SimpulSync 4 • Capr • {:.0}px",
+                                DEFAULT_WINDOW_WIDTH
+                            ))
+                            .size(FONT_MICRO)
+                            .color(pal.ink_muted),
+                        );
+                    });
+                });
+            });
+
+        self.draw_right_drawer(ctx, pal, now);
+
+        egui::CentralPanel::default()
+            .frame(
+                Frame::new()
+                    .fill(pal.bg_canvas)
+                    .inner_margin(Margin::symmetric(20, 12)),
+            )
+            .show(ctx, |ui| {
+                self.draw_hero_banner_and_bridge(ui, pal, now);
+                ui.add_space(10.0);
+                self.draw_toolbar(ui, pal);
+                ui.add_space(10.0);
+
+                let indices = self.filtered_indices();
+                ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if indices.is_empty() {
+                            ui.add_space(48.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("No matching Simpul applications")
+                                        .size(FONT_CARD_TITLE)
+                                        .color(pal.ink_secondary),
+                                );
+                                ui.add_space(6.0);
+                                if ui.button("Reset filters").clicked() {
+                                    self.filter = FilterTab::All;
+                                    self.search_query.clear();
+                                }
+                            });
+                        } else {
+                            match self.registry.settings.view_mode {
+                                ViewMode::Grid => {
+                                    self.draw_cards_grid(ui, &indices, pal, now);
+                                }
+                                ViewMode::Table => {
+                                    self.draw_table_view(ui, &indices, pal, now);
+                                }
+                            }
+                        }
+                    });
+            });
+
+        self.draw_modals(ctx, pal, now);
+        self.draw_suite_windows(ctx, pal, now);
+        self.draw_toasts(ctx, pal, now);
+        self.handle_screenshot_lifecycle(ctx);
+    }
+}
+
+fn draw_pill(ui: &mut egui::Ui, text: &str, bg: Color32, fg: Color32, font_size: f32) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), FontId::proportional(font_size), fg);
+    let dot_space = 10.0;
+    let pad = Vec2::new(14.0 + dot_space, 0.0);
+    let h = (galley.size().y + 6.0).min(BADGE_PILL_HEIGHT);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + pad.x, h), Sense::hover());
+    ui.painter().rect_filled(rect, h * 0.5, bg);
+    ui.painter().rect_stroke(
+        rect,
+        h * 0.5,
+        Stroke::new(
+            0.8_f32,
+            Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 80),
+        ),
+        StrokeKind::Inside,
+    );
+    let dot_center = Pos2::new(rect.left() + 8.5, rect.center().y);
+    ui.painter().circle_filled(dot_center, 2.6, fg);
+    let text_pos = Pos2::new(
+        rect.left() + 15.5,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter().galley(text_pos, galley, fg);
+}

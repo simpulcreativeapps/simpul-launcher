@@ -1,0 +1,22 @@
+Simpul Creative Launcher
+Copyright (c) 2026 Simpul Project (https://simpulproject.com).
+
+Simpul Creative Launcher adalah karya turunan dari ArtCraft Launcher
+(https://github.com/storytold/craft-launcher):
+
+    ArtCraft Launcher
+    Copyright (c) 2026 ArtCraft Team and the ArtCraft Launcher contributors.
+    Licensed under the MIT License or the Apache License, Version 2.0, at your option.
+
+Teks lisensi aslinya ada di licenses/artcraft-launcher/LICENSE-MIT dan
+licenses/artcraft-launcher/LICENSE-APACHE.
+
+Perubahan oleh Simpul Project: ditulis ulang sebagai satu crate, katalog dan identitas
+Simpul Creative Apps, integrasi CLI untuk agen, status dan pembaruan lewat manifest
+bertanda tangan (simpul-guard), serta dialog Tentang dan donasi.
+
+Nama, wordmark, logo, dan tanda "A" ArtCraft adalah merek dagang ArtCraft Team. Semuanya
+tidak dipakai di produk ini, dan Simpul Creative Launcher tidak berafiliasi dengan atau
+didukung oleh ArtCraft Team.
+
+Nama dan logo Simpul adalah milik Simpul Project dan tidak termasuk lisensi kode.

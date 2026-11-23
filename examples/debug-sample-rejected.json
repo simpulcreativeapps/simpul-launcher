@@ -1,0 +1,8 @@
+{
+  "id": "simpul-experimental-debug",
+  "name": "Simpul Experimental Debug",
+  "version": "0.1.0-dev",
+  "profile": "debug",
+  "tagline": "Unoptimized debug build (blocked by default Deploy Gate)",
+  "category": "Internal Dev"
+}

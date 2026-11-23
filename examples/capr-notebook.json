@@ -1,0 +1,11 @@
+{
+  "id": "capr",
+  "name": "Capr",
+  "version": "1.4.0",
+  "profile": "release",
+  "tagline": "Interactive creative & computational notebook by Simpul",
+  "headline": "Live code, data exploration, markdown & visual canvas in one native Simpul notebook.",
+  "about": "Capr is Simpul's production-ready interactive notebook for creative prototyping, data storytelling, AI agent experiments with Claude and Antigravity (agy), and reproducible studio workflows.",
+  "category": "Flagship • Notebook",
+  "launch_flags": "--workspace-sync"
+}

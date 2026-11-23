@@ -1,0 +1,11 @@
+{
+  "id": "simpulgram-publisher-cli",
+  "name": "SimpulGram Publisher",
+  "version": "2.4.1",
+  "profile": "release",
+  "tagline": "Batch story & reel uploader integrated with SimpulGram and Antigravity (agy)",
+  "headline": "Production command-line publisher for SimpulGram creative channels.",
+  "about": "Uploads approved masters directly to SimpulGram boards with automatic sRGB verification and SHA-256 manifest signing.",
+  "category": "Flagship Companion",
+  "launch_flags": "--channel production"
+}
