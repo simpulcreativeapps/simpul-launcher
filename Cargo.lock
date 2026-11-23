@@ -3327,7 +3327,7 @@ dependencies = [
 [[package]]
 name = "simpul-guard"
 version = "0.1.0"
-source = "git+https://github.com/simpulcreativeapps/simpul-guard?rev=eb52ce1#eb52ce18934d8be0603d1ef5926e4c64bc7abf85"
+source = "git+https://github.com/simpulcreativeapps/simpul-guard?rev=85ad8d8#85ad8d88baa731cd4e64c48fe6b14dd13712bf87"
 dependencies = [
  "base64",
  "chrono",

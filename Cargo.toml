@@ -13,4 +13,4 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-simpul-guard = { git = "https://github.com/simpulcreativeapps/simpul-guard", rev = "eb52ce1" }
+simpul-guard = { git = "https://github.com/simpulcreativeapps/simpul-guard", rev = "85ad8d8" }

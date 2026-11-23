@@ -31,17 +31,31 @@ pub const UPSTREAM_URL: &str = "https://github.com/storytold/craft-launcher";
 /// Id launcher di `simpul-manifest`.
 pub const LAUNCHER_MANIFEST_ID: &str = "launcher";
 
-/// Id aplikasi di katalog launcher -> id di `simpul-manifest`.
-/// Aplikasi yang belum tercantum di manifest tidak dicek (berjalan normal).
-pub fn manifest_id_for(app_id: &str) -> Option<&'static str> {
+/// Id aplikasi di launcher -> id di `simpul-manifest`. Sebagian besar sama; Simpul Sync
+/// memakai id lama `simpulsync-4` di komputer pengguna (dari pemindaian aplikasi terpasang).
+pub fn manifest_id_for(app_id: &str) -> &str {
     match app_id {
-        "simpulsync-4" | "simpul-sync" | "sync" => Some("sync"),
-        "simpul-video" | "video" => Some("video"),
-        "simpul-design" | "design" => Some("design"),
-        "simpul-3d" | "3d" => Some("3d"),
-        "simpul-audio" | "audio" => Some("audio"),
-        _ => None,
+        "simpulsync-4" | "simpul-sync" => "sync",
+        other => other,
     }
+}
+
+/// Kebalikan dari [`manifest_id_for`].
+pub fn launcher_id_for(manifest_id: &str) -> &str {
+    match manifest_id {
+        "sync" => "simpulsync-4",
+        other => other,
+    }
+}
+
+/// Satu aplikasi di manifest bertanda tangan. `version` kosong berarti belum ada rilis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogEntry {
+    /// Id di launcher.
+    pub app_id: String,
+    pub name: String,
+    pub tagline: Option<String>,
+    pub version: Option<String>,
 }
 
 /// Folder cache bersama untuk launcher dan semua aplikasi Simpul, supaya manifest sah
@@ -98,6 +112,8 @@ pub struct GuardSnapshot {
     pub launcher: Option<Report>,
     /// Kunci: id aplikasi di katalog launcher.
     pub apps: BTreeMap<String, Report>,
+    /// Isi manifest sah terakhir. `None` berarti belum pernah ada manifest sah.
+    pub catalog: Option<Vec<CatalogEntry>>,
     /// Kunci: `LAUNCHER_MANIFEST_ID` atau id aplikasi di katalog launcher.
     pub downloads: BTreeMap<String, DownloadState>,
     /// Bertambah setiap pengecekan selesai, supaya UI tahu ada hasil baru.
@@ -134,7 +150,7 @@ impl GuardHub {
         self.lock().clone()
     }
 
-    /// Cek status launcher dan aplikasi di latar. `apps` = (id katalog, versi terpasang/terbaru).
+    /// Cek status launcher dan aplikasi di latar. `apps` = (id launcher, versi TERPASANG).
     /// `on_done` dipanggil dari thread latar saat hasil siap (untuk meminta repaint).
     pub fn refresh(&self, apps: Vec<(String, String)>, on_done: impl Fn() + Send + 'static) {
         {
@@ -149,13 +165,17 @@ impl GuardHub {
             .name("simpul-guard-check".into())
             .spawn(move || {
                 let cache = guard_cache_dir();
-                let launcher = Guard::new(LAUNCHER_MANIFEST_ID, LAUNCHER_VERSION, &cache).check();
-                let mut reports = BTreeMap::new();
-                for (app_id, version) in apps {
-                    if let Some(mid) = manifest_id_for(&app_id) {
-                        reports.insert(app_id, Guard::new(mid, &version, &cache).check());
+                let launcher_guard = Guard::new(LAUNCHER_MANIFEST_ID, LAUNCHER_VERSION, &cache);
+                // Satu-satunya akses jaringan: ambil manifest, verifikasi, simpan ke cache.
+                let launcher = launcher_guard.check();
+                let manifest = launcher_guard.cached_manifest();
+                let (reports, catalog) = match &manifest {
+                    Some(m) => {
+                        let (r, c) = evaluate_catalog(m, &apps, &cache);
+                        (r, Some(c))
                     }
-                }
+                    None => (BTreeMap::new(), None),
+                };
                 log_event(&format!(
                     "cek status: launcher={} asal={:?} aplikasi={}",
                     verdict_name(&launcher.verdict),
@@ -166,6 +186,7 @@ impl GuardHub {
                     let mut snap = hub.lock();
                     snap.launcher = Some(launcher);
                     snap.apps = reports;
+                    snap.catalog = catalog;
                     snap.checking = false;
                     snap.checked = true;
                     snap.generation = snap.generation.wrapping_add(1);
@@ -215,6 +236,37 @@ impl GuardHub {
     pub fn clear_download(&self, key: &str) {
         self.lock().downloads.remove(key);
     }
+}
+
+/// Nilai setiap aplikasi di manifest dari cache (tanpa jaringan) dan susun katalognya.
+fn evaluate_catalog(
+    manifest: &simpul_guard::Manifest,
+    installed: &[(String, String)],
+    cache: &std::path::Path,
+) -> (BTreeMap<String, Report>, Vec<CatalogEntry>) {
+    let mut reports = BTreeMap::new();
+    let mut catalog = Vec::new();
+    for (manifest_id, entry) in &manifest.apps {
+        if manifest_id == LAUNCHER_MANIFEST_ID {
+            continue;
+        }
+        let app_id = launcher_id_for(manifest_id).to_string();
+        // Aplikasi yang belum terpasang dinilai sebagai versi 0.0.0, supaya rilisnya terbaca.
+        let version = installed
+            .iter()
+            .find(|(id, _)| *id == app_id)
+            .map_or("0.0.0", |(_, v)| v.as_str());
+        let mut guard = Guard::new(manifest_id, version, cache);
+        guard.sources.clear();
+        reports.insert(app_id.clone(), guard.check());
+        catalog.push(CatalogEntry {
+            app_id,
+            name: entry.name.clone(),
+            tagline: entry.tagline.clone(),
+            version: entry.release.as_ref().map(|r| r.version.clone()),
+        });
+    }
+    (reports, catalog)
 }
 
 fn verdict_name(v: &Verdict) -> &'static str {
@@ -458,8 +510,10 @@ mod tests {
 
     #[test]
     fn sync_maps_to_manifest_id() {
-        assert_eq!(manifest_id_for("simpulsync-4"), Some("sync"));
-        assert_eq!(manifest_id_for("capr"), None);
+        assert_eq!(manifest_id_for("simpulsync-4"), "sync");
+        assert_eq!(launcher_id_for("sync"), "simpulsync-4");
+        assert_eq!(manifest_id_for("video"), "video");
+        assert_eq!(launcher_id_for(manifest_id_for("design")), "design");
     }
 
     #[test]

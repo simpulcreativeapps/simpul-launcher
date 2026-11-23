@@ -50,6 +50,53 @@ pub fn now_label() -> String {
     format!("{hours:02}:{mins:02} WIB")
 }
 
+/// Versi 2: katalog mengikuti manifest; entri contoh bawaan versi 1 dibuang.
+pub const REGISTRY_VERSION: u32 = 2;
+
+/// Buang entri contoh dari registry versi lama. Aplikasi yang terpasang dan yang diimpor
+/// pengguna atau agen tetap dipertahankan.
+fn migrate_registry(reg: &mut SimpulRegistry) -> bool {
+    if reg.version >= REGISTRY_VERSION {
+        return false;
+    }
+    reg.apps
+        .retain(|a| a.install_state.is_installed() || a.origin != AgentOrigin::SimpulSuite);
+    let kept: Vec<String> = reg.apps.iter().map(|a| a.id.clone()).collect();
+    reg.events.retain(|e| kept.contains(&e.app_id));
+    reg.version = REGISTRY_VERSION;
+    true
+}
+
+/// Entri katalog untuk aplikasi yang dirilis lewat manifest tetapi belum terpasang.
+pub fn catalog_app(id: &str, name: &str, tagline: Option<&str>, version: &str) -> SimpulApp {
+    let tagline = tagline.unwrap_or("Aplikasi Simpul Creative Apps").to_string();
+    SimpulApp {
+        id: id.to_string(),
+        name: name.to_string(),
+        headline: tagline.clone(),
+        about: tagline.clone(),
+        tagline,
+        category: "Simpul Creative Apps".to_string(),
+        latest_version: version.to_string(),
+        released_date: String::new(),
+        download_size_mb: 0.0,
+        sha256: String::new(),
+        profile: BuildProfile::Release,
+        origin: AgentOrigin::SimpulSuite,
+        package_format: PackageFormat::NativeExe,
+        accent_rgb: [77, 141, 255],
+        icon_kind: if id == "simpulsync-4" { "sync4" } else { "app" }.to_string(),
+        pinned: false,
+        hidden: false,
+        launch_flags: String::new(),
+        workspace_path: None,
+        artifact_path: None,
+        features: Vec::new(),
+        release_notes: Vec::new(),
+        install_state: InstallState::NotInstalled,
+    }
+}
+
 pub fn load_or_init_registry(ephemeral: bool) -> SimpulRegistry {
     if ephemeral {
         let mut reg = default_registry();
@@ -59,8 +106,9 @@ pub fn load_or_init_registry(ephemeral: bool) -> SimpulRegistry {
     let path = registry_file_path();
     if let Ok(raw) = fs::read_to_string(&path) {
         if let Ok(mut reg) = serde_json::from_str::<SimpulRegistry>(&raw) {
+            let migrated = migrate_registry(&mut reg);
             let changes = reconcile_installed_apps(&mut reg);
-            if !changes.is_empty() {
+            if migrated || !changes.is_empty() {
                 let _ = save_registry(&reg);
             }
             return reg;
@@ -1390,314 +1438,16 @@ pub fn split_launch_flags(raw: &str) -> Result<Vec<String>, String> {
 }
 
 pub fn default_registry() -> SimpulRegistry {
-    let root = default_install_root();
-    let root_str = root.display().to_string();
+    let root_str = default_install_root().display().to_string();
 
-    let apps = vec![
-        SimpulApp {
-            id: "simpulgram".to_string(),
-            name: "SimpulGram".to_string(),
-            tagline: "Visual publishing, creative feed & client review messenger".to_string(),
-            headline: "Production visual communication & creative showcase for Simpul teams.".to_string(),
-            about: "SimpulGram is Simpul's flagship deploy-ready desktop client for instant visual publishing, high-fidelity media boards, annotated client approvals, and team channels—compiled in strict Release mode with zero debug overhead.".to_string(),
-            category: "Flagship • Social & Review".to_string(),
-            latest_version: "2.4.1".to_string(),
-            released_date: "2026-11-14".to_string(),
-            download_size_mb: 42.8,
-            sha256: "9f84c2d17a6be30854d119c70a4e81bf2239c04e67ab812934ef92d810ab441e".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::SimpulSuite,
-            package_format: PackageFormat::Msi,
-            accent_rgb: [78, 123, 251],
-            icon_kind: "gram".to_string(),
-            pinned: true,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: Some(root.join("simpulgram").display().to_string()),
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Color-Accurate Media Stream".to_string(),
-                    description: "Share sRGB and Display-P3 layouts, reels, and carousels with frame-accurate comments.".to_string(),
-                },
-                AppFeature {
-                    title: "Deploy-Ready Release Build".to_string(),
-                    description: "Production signed x64 build verified against SHA-256 manifest (non-debug).".to_string(),
-                },
-                AppFeature {
-                    title: "Claude & Antigravity Hooks".to_string(),
-                    description: "Trigger automated release post drafts or asset exports directly via CLI or Claude.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v2.4.1 — Faster WebP/AVIF gallery decoding and instant board deep-links.".to_string(),
-                "v2.4.0 — Added Simpul Creative Launcher single-click workspace handoff.".to_string(),
-            ],
-            install_state: InstallState::Installed {
-                version: "2.4.1".to_string(),
-                install_path: root.join("simpulgram").join("2.4.1").display().to_string(),
-                installed_at: "Today, 09:40 WIB".to_string(),
-            },
-        },
-        SimpulApp {
-            id: "simpulsync-4".to_string(),
-            name: "SimpulSync 4".to_string(),
-            tagline: "Sinkronisasi audio dan video multi-kamera".to_string(),
-            headline: "Selaraskan rekaman banyak kamera dan perekam audio lewat suaranya.".to_string(),
-            about: "Simpul Sync menyelaraskan rekaman dari beberapa kamera dan perekam audio terpisah dengan membandingkan suaranya, lalu mengekspor timeline untuk Premiere Pro, DaVinci Resolve, dan Final Cut Pro. Tersedia sebagai aplikasi desktop, CLI, dan server MCP.".to_string(),
-            category: "Video • Audio".to_string(),
-            latest_version: "4.1.11".to_string(),
-            released_date: "2026-11-16".to_string(),
-            download_size_mb: 31.6,
-            sha256: "4b71e908a22f51dc6388fa2017bd4e92ca510299c820df16a73e8b5c1109ef42".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::SimpulSuite,
-            package_format: PackageFormat::NativeExe,
-            accent_rgb: [16, 185, 129],
-            icon_kind: "sync4".to_string(),
-            pinned: true,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: Some(root.join("simpulsync-4").display().to_string()),
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Sinkron lewat suara".to_string(),
-                    description: "Mencocokkan rekaman tanpa clapper atau timecode.".to_string(),
-                },
-                AppFeature {
-                    title: "Koreksi drift".to_string(),
-                    description: "Mengukur dan mengoreksi selisih kecepatan jam antar perangkat.".to_string(),
-                },
-                AppFeature {
-                    title: "CLI dan MCP".to_string(),
-                    description: "Bisa dijalankan dari terminal atau oleh agen AI.".to_string(),
-                },
-            ],
-            release_notes: Vec::new(),
-            install_state: InstallState::NotInstalled,
-        },
-        SimpulApp {
-            id: "capr".to_string(),
-            name: "Capr".to_string(),
-            tagline: "Interactive creative, data & AI notebook by Simpul".to_string(),
-            headline: "Live executable cells, visual blocks, and AI workflows in one native notebook.".to_string(),
-            about: "Capr is Simpul's production-ready notebook workspace combining interactive code & query cells, rich prose, live visual outputs, and direct Claude & Antigravity (agy) cell collaboration.".to_string(),
-            category: "Flagship • Notebook".to_string(),
-            latest_version: "1.4.2".to_string(),
-            released_date: "2026-11-16".to_string(),
-            download_size_mb: 38.4,
-            sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::SimpulSuite,
-            package_format: PackageFormat::Msi,
-            accent_rgb: [99, 102, 241],
-            icon_kind: "capr".to_string(),
-            pinned: true,
-            hidden: false,
-            launch_flags: "--desktop-app".to_string(),
-            workspace_path: Some(root.join("capr").display().to_string()),
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Reactive Multi-Language Cells".to_string(),
-                    description: "Run reproducible creative scripts, data pipelines, and visual widgets with instant DAG reactivity.".to_string(),
-                },
-                AppFeature {
-                    title: "Claude & Antigravity (agy) Co-Authoring".to_string(),
-                    description: "Import notebooks or trigger Capr kernels directly from CLI, Claude, or Antigravity.".to_string(),
-                },
-                AppFeature {
-                    title: "SimpulSync 4 & SimpulGram Ready".to_string(),
-                    description: "Sync `.capr` notebooks across studios and publish rendered charts directly to SimpulGram.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v1.4.2 — Production Release installer, faster canvas cell rendering, and CLI notebook runner.".to_string(),
-                "v1.4.0 — Added direct Claude & Antigravity (agy) notebook import bridge.".to_string(),
-            ],
-            install_state: InstallState::Installed {
-                version: "1.4.2".to_string(),
-                install_path: root.join("capr").join("1.4.2").display().to_string(),
-                installed_at: "Today, 16:20 WIB".to_string(),
-            },
-        },
-        SimpulApp {
-            id: "simpuldocs".to_string(),
-            name: "SimpulDocs".to_string(),
-            tagline: "Creative briefs, release runbooks & team knowledge hub".to_string(),
-            headline: "Offline-first structured specs imported & deployed via Claude AI.".to_string(),
-            about: "SimpulDocs organizes creative briefs, brand guidelines, and release checklists in clean local Markdown bundles. Imported and installed directly through the Claude CLI integration bridge.".to_string(),
-            category: "Knowledge & Specs".to_string(),
-            latest_version: "3.1.0".to_string(),
-            released_date: "2026-11-15".to_string(),
-            download_size_mb: 24.2,
-            sha256: "7d3e920a11cb558e201f98a003c4bb812d910fe4a2c889012fe31b90112c774a".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::Claude,
-            package_format: PackageFormat::PortableZip,
-            accent_rgb: [168, 85, 247],
-            icon_kind: "docs".to_string(),
-            pinned: false,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: Some(root.join("simpuldocs").display().to_string()),
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Claude Direct Import".to_string(),
-                    description: "Automatically packaged and registered into Simpul Creative Launcher by Claude.".to_string(),
-                },
-                AppFeature {
-                    title: "Instant Full-Text Index".to_string(),
-                    description: "Search thousands of creative specs and brand tokens offline in under 5 ms.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v3.1.0 — Imported & verified Release package via `simpul-creative-launcher import --agent claude`.".to_string(),
-            ],
-            install_state: InstallState::Installed {
-                version: "3.1.0".to_string(),
-                install_path: root.join("simpuldocs").join("3.1.0").display().to_string(),
-                installed_at: "Yesterday".to_string(),
-            },
-        },
-        SimpulApp {
-            id: "simpulflow".to_string(),
-            name: "SimpulFlow".to_string(),
-            tagline: "Release build verifier & Antigravity (agy) deployment companion".to_string(),
-            headline: "Automated release checks and one-click handoff to Antigravity agy.".to_string(),
-            about: "SimpulFlow inspects Rust, Flutter, and web artifacts before deployment, ensuring debug symbols and dev flags are stripped prior to publishing in Simpul Creative Launcher.".to_string(),
-            category: "DevOps & CLI Bridge".to_string(),
-            latest_version: "1.3.0".to_string(),
-            released_date: "2026-11-15".to_string(),
-            download_size_mb: 19.4,
-            sha256: "c180f4429b8e11076a455dc90e1274ab8901cc31f2547908ea1b3c778290df11".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::AntigravityAgy,
-            package_format: PackageFormat::NativeExe,
-            accent_rgb: [6, 182, 212],
-            icon_kind: "flow".to_string(),
-            pinned: false,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: Some(root.join("simpulflow").display().to_string()),
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Antigravity (agy) Sync".to_string(),
-                    description: "Open project workspaces or dispatch automated release fixes in Antigravity IDE/CLI.".to_string(),
-                },
-                AppFeature {
-                    title: "Non-Debug Gatekeeper".to_string(),
-                    description: "Rejects unoptimized debug artifacts before team distribution.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v1.3.0 — Synced with Antigravity (agy) workspace runner and SHA-256 receipt verifier.".to_string(),
-            ],
-            install_state: InstallState::Installed {
-                version: "1.3.0".to_string(),
-                install_path: root.join("simpulflow").join("1.3.0").display().to_string(),
-                installed_at: "Today, 14:15 WIB".to_string(),
-            },
-        },
-        SimpulApp {
-            id: "simpulstudio".to_string(),
-            name: "SimpulStudio".to_string(),
-            tagline: "Node-based media compositor, LUT grading & batch exporter".to_string(),
-            headline: "GPU-accelerated creative assembly and batch rendering pipeline.".to_string(),
-            about: "Compose social templates, apply studio LUTs, and render multi-aspect deliverables ready for SimpulGram and SimpulSync 4.".to_string(),
-            category: "Creative Production".to_string(),
-            latest_version: "1.9.0".to_string(),
-            released_date: "2026-11-12".to_string(),
-            download_size_mb: 68.5,
-            sha256: "55ab901e34f82c71a098bc4512de87341190fa6bc2238901cde741289ab0312f".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::SimpulSuite,
-            package_format: PackageFormat::Msi,
-            accent_rgb: [245, 158, 11],
-            icon_kind: "studio".to_string(),
-            pinned: false,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: None,
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Batch Multi-Ratio Render".to_string(),
-                    description: "Export 1:1, 4:5, 9:16, and 16:9 masters in a single GPU pass.".to_string(),
-                },
-                AppFeature {
-                    title: "Direct SimpulGram Publish".to_string(),
-                    description: "Send finished deliverables straight to SimpulGram review boards.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v1.9.0 — Production Release installer with hardware H.264/AV1 export presets.".to_string(),
-            ],
-            install_state: InstallState::NotInstalled,
-        },
-        SimpulApp {
-            id: "simpulcanvas".to_string(),
-            name: "SimpulCanvas".to_string(),
-            tagline: "Infinite moodboard, vector layout & interactive storyboard".to_string(),
-            headline: "Fast, native infinite canvas for creative direction and wireframes.".to_string(),
-            about: "Arrange references, typography sheets, and interactive flows offline at 120 Hz, synced effortlessly across your studio with SimpulSync 4.".to_string(),
-            category: "Design & Layout".to_string(),
-            latest_version: "2.0.4".to_string(),
-            released_date: "2026-11-09".to_string(),
-            download_size_mb: 36.0,
-            sha256: "812fa9c03e771b4509dc2188e643a90fb11278c49021aa765de0192bc44810e3".to_string(),
-            profile: BuildProfile::Release,
-            origin: AgentOrigin::SimpulSuite,
-            package_format: PackageFormat::Msi,
-            accent_rgb: [236, 72, 153],
-            icon_kind: "canvas".to_string(),
-            pinned: false,
-            hidden: false,
-            launch_flags: String::new(),
-            workspace_path: None,
-            artifact_path: None,
-            features: vec![
-                AppFeature {
-                    title: "Zero-Latency Vector Canvas".to_string(),
-                    description: "Pan and zoom across thousands of high-res artboards smoothly.".to_string(),
-                },
-            ],
-            release_notes: vec![
-                "v2.0.4 — Signed Windows x64 Release build with PDF & SVG artboard export.".to_string(),
-            ],
-            install_state: InstallState::NotInstalled,
-        },
-    ];
+    // Katalog tidak lagi ditanam di launcher: isinya datang dari manifest bertanda tangan
+    // (aplikasi yang sudah dirilis) dan dari aplikasi yang terpasang di komputer ini.
+    let apps: Vec<SimpulApp> = Vec::new();
 
-    let events = vec![
-        AgentActivityEvent {
-            timestamp: "14:15 WIB".to_string(),
-            actor: AgentOrigin::AntigravityAgy,
-            action: "install".to_string(),
-            app_id: "simpulflow".to_string(),
-            summary: "Antigravity (agy) verified & installed SimpulFlow v1.3.0 (Release)".to_string(),
-        },
-        AgentActivityEvent {
-            timestamp: "Yesterday".to_string(),
-            actor: AgentOrigin::Claude,
-            action: "import+install".to_string(),
-            app_id: "simpuldocs".to_string(),
-            summary: "Claude AI imported & installed SimpulDocs v3.1.0 (Deploy Ready)".to_string(),
-        },
-        AgentActivityEvent {
-            timestamp: "2026-11-14".to_string(),
-            actor: AgentOrigin::SimpulSuite,
-            action: "verify".to_string(),
-            app_id: "simpulgram".to_string(),
-            summary: "SimpulGram v2.4.1 & SimpulSync 4 marked Layak Deploy (Non-Debug)".to_string(),
-        },
-    ];
+    let events: Vec<AgentActivityEvent> = Vec::new();
 
     SimpulRegistry {
-        version: 1,
+        version: REGISTRY_VERSION,
         last_checked_label: "Belum dicek".to_string(),
         settings: LauncherSettings {
             theme: ThemeChoice::Dark,
@@ -1739,10 +1489,38 @@ mod tests {
     }
 
     #[test]
-    fn default_catalog_is_safe_to_install() {
-        for app in default_registry().apps {
-            assert!(!app.id.is_empty() && slugify_id(&app.id) == app.id, "{}", app.id);
-            assert!(is_safe_version(&app.latest_version), "{}", app.id);
-        }
+    fn nothing_is_listed_until_something_is_released() {
+        let reg = default_registry();
+        assert!(reg.apps.is_empty());
+        assert!(reg.events.is_empty());
+        assert_eq!(reg.version, REGISTRY_VERSION);
+    }
+
+    #[test]
+    fn migration_drops_sample_entries_but_keeps_real_ones() {
+        let mut reg = default_registry();
+        reg.version = 1;
+        let sample = catalog_app("simpulgram", "SimpulGram", None, "2.4.1");
+        let mut installed = catalog_app("simpulsync-4", "SimpulSync 4", None, "4.1.11");
+        installed.install_state = InstallState::Installed {
+            version: "4.1.11".into(),
+            install_path: "x".into(),
+            installed_at: "y".into(),
+        };
+        let mut imported = catalog_app("alat-saya", "Alat Saya", None, "1.0.0");
+        imported.origin = AgentOrigin::Claude;
+        reg.apps = vec![sample, installed, imported];
+        assert!(migrate_registry(&mut reg));
+        let ids: Vec<&str> = reg.apps.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["simpulsync-4", "alat-saya"]);
+        assert!(!migrate_registry(&mut reg), "hanya sekali");
+    }
+
+    #[test]
+    fn catalog_app_is_safe_to_install() {
+        let app = catalog_app("simpulsync-4", "Simpul Sync", Some("Sinkron audio"), "4.2.0");
+        assert_eq!(slugify_id(&app.id), app.id);
+        assert!(is_safe_version(&app.latest_version));
+        assert!(!app.install_state.is_installed());
     }
 }

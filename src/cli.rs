@@ -468,7 +468,8 @@ fn cmd_launch(args: &[String]) -> i32 {
         return 1;
     };
     // Status merah yang sudah pernah diterima tetap berlaku di CLI (dibaca dari cache, tanpa jaringan).
-    if let Some(mid) = crate::suite::manifest_id_for(&app.id) {
+    {
+        let mid = crate::suite::manifest_id_for(&app.id);
         let version = app
             .install_state
             .installed_version()

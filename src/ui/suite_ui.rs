@@ -22,7 +22,7 @@ const NEVER: f64 = f64::INFINITY;
 impl SimpulLauncherApp {
     /// Mulai cek status & pembaruan di latar (tidak menahan UI).
     pub(super) fn start_guard_check(&mut self, ctx: &egui::Context, user_asked: bool) {
-        if self.ephemeral {
+        if !self.guard_enabled {
             return;
         }
         if user_asked {
@@ -32,13 +32,9 @@ impl SimpulLauncherApp {
             .registry
             .apps
             .iter()
-            .map(|a| {
-                let version = a
-                    .install_state
-                    .installed_version()
-                    .unwrap_or(&a.latest_version)
-                    .to_string();
-                (a.id.clone(), version)
+            .filter_map(|a| {
+                let version = a.install_state.installed_version()?.to_string();
+                Some((a.id.clone(), version))
             })
             .collect();
         let repaint = ctx.clone();
@@ -47,7 +43,7 @@ impl SimpulLauncherApp {
 
     /// Dipanggil setiap frame: ambil hasil terbaru dan jadwalkan cek berkala.
     pub(super) fn sync_guard(&mut self, ctx: &egui::Context, now: f64) {
-        if self.ephemeral {
+        if !self.guard_enabled {
             return;
         }
         if now >= self.guard_next_check {
@@ -66,15 +62,13 @@ impl SimpulLauncherApp {
         }
         self.guard_seen_gen = self.guard_snap.generation;
 
-        let mut updates = 0usize;
-        for app in &mut self.registry.apps {
-            if let Some(update) = self.guard_snap.app_update(&app.id) {
-                app.latest_version = update.version.to_string();
-                if app.install_state.is_installed() {
-                    updates += 1;
-                }
-            }
-        }
+        self.apply_catalog();
+        let mut updates = self
+            .registry
+            .apps
+            .iter()
+            .filter(|a| a.install_state.is_installed() && self.guard_snap.app_update(&a.id).is_some())
+            .count();
         let launcher = self.guard_snap.launcher.clone();
         if launcher.as_ref().is_some_and(|r| r.update.is_some()) {
             updates += 1;
@@ -100,6 +94,50 @@ impl SimpulLauncherApp {
             };
             self.push_toast(now, text, is_error);
         }
+    }
+
+    /// Samakan daftar aplikasi dengan manifest: yang tampil hanya aplikasi yang sudah dirilis,
+    /// yang terpasang di komputer ini, dan yang diimpor pengguna atau agen.
+    fn apply_catalog(&mut self) {
+        let Some(catalog) = self.guard_snap.catalog.clone() else {
+            return;
+        };
+        for entry in &catalog {
+            let may_run = self.guard_snap.app_may_run(&entry.app_id);
+            match self.registry.apps.iter_mut().find(|a| a.id == entry.app_id) {
+                Some(app) => {
+                    if let Some(version) = &entry.version {
+                        app.latest_version = version.clone();
+                    }
+                    if let Some(tagline) = &entry.tagline {
+                        app.tagline = tagline.clone();
+                    }
+                }
+                None => {
+                    if let (Some(version), true) = (&entry.version, may_run) {
+                        if crate::registry::is_safe_version(version) {
+                            self.registry.apps.push(crate::registry::catalog_app(
+                                &entry.app_id,
+                                &entry.name,
+                                entry.tagline.as_deref(),
+                                version,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let released = |id: &str| {
+            catalog
+                .iter()
+                .any(|c| c.app_id == id && c.version.is_some())
+        };
+        let guard = &self.guard_snap;
+        self.registry.apps.retain(|a| {
+            a.install_state.is_installed()
+                || a.origin != crate::models::AgentOrigin::SimpulSuite
+                || (released(&a.id) && guard.app_may_run(&a.id))
+        });
     }
 
     /// Buka aplikasi, kecuali manifest menyatakan aplikasi itu sudah dihentikan.

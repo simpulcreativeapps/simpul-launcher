@@ -13,7 +13,7 @@ use crate::models::{
     InstallState, QueueStage, SimpulApp, SimpulRegistry, SortKey, ThemeChoice,
     ToolIntegrationStatus, ViewMode, BADGE_PILL_HEIGHT, CARD_CORNER_RADIUS, CARD_GRID_SPACING,
     CARD_HOVER_ANIM_SECS, CARD_HOVER_TINT_FACTOR, CARD_ICON_SIZE, CARD_INNER_PADDING,
-    CARD_MIN_WIDTH, CONTROL_CORNER_RADIUS, DEFAULT_WINDOW_WIDTH, DRAWER_ANIM_SECS,
+    CARD_MIN_WIDTH, CONTROL_CORNER_RADIUS, DRAWER_ANIM_SECS,
     DRAWER_MAX_WIDTH, DRAWER_MIN_WIDTH, FONT_BODY, FONT_CAPTION, FONT_CARD_TITLE, FONT_HEADING,
     FONT_MICRO, HEADER_MARK_SIZE, HERO_ICON_SIZE, LIVE_SYNC_POLL_SECS, PRIMARY_BTN_HEIGHT,
     SCREENSHOT_WARMUP_FRAMES, SECONDARY_BTN_HEIGHT, TOAST_ERROR_DURATION_SECS,
@@ -224,6 +224,7 @@ pub struct SimpulLauncherApp {
     guard_seen_gen: u64,
     guard_next_check: f64,
     guard_user_asked: bool,
+    guard_enabled: bool,
     about_open: bool,
     donate_open: bool,
     donate_agree: bool,
@@ -281,6 +282,7 @@ impl SimpulLauncherApp {
             guard_seen_gen: 0,
             guard_next_check: 0.0,
             guard_user_asked: false,
+            guard_enabled: !ephemeral || shot_view == "live",
             // Mode tangkapan layar: SIMPUL_SHOT_VIEW memilih jendela yang ditampilkan.
             about_open: shot_view == "about",
             donate_open: shot_view == "donate",
@@ -750,7 +752,7 @@ impl SimpulLauncherApp {
                     );
                 });
                 ui.label(
-                    RichText::new("Deploy-Ready Suite (SimpulGram • SimpulSync 4 • Capr) + CLI • agy • Claude")
+                    RichText::new("Pasang, perbarui, dan buka aplikasi Simpul Creative Apps")
                         .size(FONT_MICRO)
                         .color(pal.ink_muted),
                 );
@@ -946,7 +948,7 @@ impl SimpulLauncherApp {
 
                         ui.label(
                             RichText::new(
-                                "Claude & Antigravity (agy) dapat mengimport & menginstall software Simpul layak deploy (SimpulGram, SimpulSync 4, Capr, dll.) langsung ke launcher ini.",
+                                "Daftar di bawah mengikuti aplikasi yang sudah dirilis. Claude dan Antigravity (agy) juga bisa mengimpor aplikasi lewat CLI.",
                             )
                             .size(FONT_CAPTION)
                             .color(Color32::from_rgb(206, 212, 236)),
@@ -979,7 +981,7 @@ impl SimpulLauncherApp {
                                     .fill(Color32::from_rgb(20, 44, 38)),
                                 )
                                 .on_hover_text(
-                                    "Pindai ulang SimpulGram, SimpulSync 4, Capr & aplikasi Simpul yang terinstall di PC ini",
+                                    "Pindai ulang aplikasi Simpul yang terpasang di komputer ini",
                                 )
                                 .clicked()
                             {
@@ -1176,7 +1178,7 @@ impl SimpulLauncherApp {
                     });
 
                 let search_edit = TextEdit::singleline(&mut self.search_query)
-                    .hint_text("🔍 Search SimpulGram, SimpulSync 4, Capr…")
+                    .hint_text("🔍 Cari aplikasi…")
                     .desired_width(215.0)
                     .font(FontId::proportional(FONT_CAPTION));
                 ui.add_sized([215.0, SECONDARY_BTN_HEIGHT], search_edit);
@@ -2211,7 +2213,7 @@ impl SimpulLauncherApp {
                             ui.label("App Name:");
                             ui.add(
                                 TextEdit::singleline(&mut self.import_form.name_input)
-                                    .hint_text("e.g. Capr / SimpulRender Pro")
+                                    .hint_text("mis. Simpul Sync")
                                     .desired_width(300.0),
                             );
                             ui.end_row();
@@ -2675,8 +2677,9 @@ impl eframe::App for SimpulLauncherApp {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!(
-                                "Deploy-Ready Flagships: SimpulGram • SimpulSync 4 • Capr • {:.0}px",
-                                DEFAULT_WINDOW_WIDTH
+                                "{} • {} aplikasi",
+                                suite::SUITE_NAME,
+                                self.registry.apps.len()
                             ))
                             .size(FONT_MICRO)
                             .color(pal.ink_muted),
@@ -2703,7 +2706,31 @@ impl eframe::App for SimpulLauncherApp {
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if indices.is_empty() {
+                        if self.registry.apps.is_empty() {
+                            ui.add_space(56.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("No apps found")
+                                        .size(FONT_HEADING)
+                                        .strong()
+                                        .color(pal.ink_secondary),
+                                );
+                                ui.add_space(6.0);
+                                let detail = if self.guard_snap.catalog.is_some() {
+                                    "Belum ada aplikasi yang dirilis. Aplikasi akan muncul di sini begitu tersedia."
+                                } else if self.guard_snap.checking {
+                                    "Memeriksa daftar aplikasi…"
+                                } else {
+                                    "Daftar aplikasi belum bisa diambil. Periksa koneksi internet, lalu cek lagi."
+                                };
+                                ui.label(RichText::new(detail).size(FONT_BODY).color(pal.ink_muted));
+                                ui.add_space(12.0);
+                                if ui.button("Cek lagi").clicked() {
+                                    let ctx = ui.ctx().clone();
+                                    self.start_guard_check(&ctx, true);
+                                }
+                            });
+                        } else if indices.is_empty() {
                             ui.add_space(48.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
