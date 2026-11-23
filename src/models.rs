@@ -232,9 +232,59 @@ impl SimpulApp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemeChoice {
+    /// Tema bawaan (gelap).
     Dark,
+    /// Tema bawaan (terang).
     Light,
     System,
+    /// Material 3 Expressive, biru Simpul (terang).
+    ExpressiveBlue,
+    /// Material 3 Expressive, hangat dan warna-warni (terang).
+    ExpressiveWarm,
+    /// Liquid Glass di atas cahaya aurora (gelap).
+    GlassAurora,
+    /// Liquid Glass di atas grafit netral (gelap).
+    GlassGraphite,
+}
+
+impl ThemeChoice {
+    /// Urutan di menu tema.
+    pub const ALL: [ThemeChoice; 6] = [
+        ThemeChoice::Dark,
+        ThemeChoice::Light,
+        ThemeChoice::ExpressiveBlue,
+        ThemeChoice::ExpressiveWarm,
+        ThemeChoice::GlassAurora,
+        ThemeChoice::GlassGraphite,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Default gelap",
+            Self::Light => "Default terang",
+            Self::System => "Ikuti sistem",
+            Self::ExpressiveBlue => "Expressive Biru",
+            Self::ExpressiveWarm => "Expressive Ceria",
+            Self::GlassAurora => "Liquid Glass Aurora",
+            Self::GlassGraphite => "Liquid Glass Grafit",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "dark" => Self::Dark,
+            "light" => Self::Light,
+            "a" | "expressive-blue" => Self::ExpressiveBlue,
+            "b" | "expressive-warm" => Self::ExpressiveWarm,
+            "c" | "glass-aurora" => Self::GlassAurora,
+            "d" | "glass-graphite" => Self::GlassGraphite,
+            _ => return None,
+        })
+    }
+
+    pub fn is_glass(self) -> bool {
+        matches!(self, Self::GlassAurora | Self::GlassGraphite)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Simpul Launcher: opsi tema</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1120px;height:760px;overflow:hidden}
+body{font-family:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;color:var(--ink);background:var(--bg);position:relative}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:var(--blob-o);pointer-events:none}
+.b1{width:520px;height:520px;left:-140px;top:-180px;background:var(--blob1)}
+.b2{width:560px;height:560px;right:-180px;top:160px;background:var(--blob2)}
+.b3{width:420px;height:420px;left:280px;bottom:-240px;background:var(--blob3)}
+.app{position:relative;height:100%;display:flex;flex-direction:column;padding:16px 20px 12px;gap:14px}
+.panel{background:var(--panel);border:var(--edge);border-radius:var(--r-lg);backdrop-filter:var(--blur);box-shadow:var(--shadow)}
+header{display:flex;align-items:center;gap:12px;padding:10px 14px}
+.logo{width:40px;height:40px;border-radius:var(--r-logo);background:linear-gradient(140deg,#4D8DFF,#7B5CFF);display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px}
+.brand b{font-size:19px;font-weight:700;letter-spacing:-.2px;display:block;line-height:1.1}
+.brand span{font-size:12px;color:var(--ink2)}
+.sp{flex:1}
+.btn{height:38px;padding:0 16px;border-radius:var(--r-btn);border:var(--btn-edge);background:var(--btn);color:var(--ink);font:600 13px inherit;display:flex;align-items:center;gap:7px}
+.btn.tonal{background:var(--tonal);color:var(--on-tonal);border-color:transparent}
+.btn.donate{background:var(--lime);color:var(--on-lime);border-color:transparent}
+.btn.primary{background:var(--primary);color:var(--on-primary);border-color:transparent;height:44px;padding:0 24px;font-size:14px;border-radius:var(--r-cta)}
+.hero{display:flex;gap:18px;padding:18px 20px;align-items:center;background:var(--hero);border:var(--edge);border-radius:var(--r-xl);backdrop-filter:var(--blur);box-shadow:var(--shadow)}
+.hero h1{font-size:var(--h1);font-weight:var(--h1w);letter-spacing:-.8px;line-height:1.05;color:var(--hero-ink)}
+.hero p{margin-top:8px;font-size:13.5px;color:var(--hero-ink2);max-width:520px;line-height:1.45}
+.hero .art{width:150px;height:110px;border-radius:var(--r-art);background:var(--art);flex:none;position:relative;overflow:hidden}
+.hero .art i{position:absolute;border-radius:var(--r-shape);background:var(--art2)}
+.hero .art i:nth-child(1){width:70px;height:70px;left:14px;top:20px}
+.hero .art i:nth-child(2){width:54px;height:54px;right:12px;bottom:10px;background:var(--lime);border-radius:50%}
+.row{display:flex;align-items:center;gap:8px}
+.chip{height:34px;padding:0 15px;border-radius:999px;border:var(--btn-edge);background:var(--btn);font:600 12.5px inherit;color:var(--ink2);display:flex;align-items:center}
+.chip.on{background:var(--chip-on);color:var(--on-chip);border-color:transparent}
+.search{flex:1;height:38px;border-radius:999px;border:var(--btn-edge);background:var(--field);padding:0 16px;display:flex;align-items:center;color:var(--ink3);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;flex:1;min-height:0}
+.card{padding:18px;display:flex;flex-direction:column;gap:10px;border-radius:var(--r-card)}
+.card.c2{background:var(--card2,var(--panel))}
+.card.c3{background:var(--card3,var(--panel))}
+.ic{width:48px;height:48px;border-radius:var(--r-ic);display:grid;place-items:center;font-weight:800;color:#fff;font-size:18px}
+.ic.a{background:linear-gradient(135deg,#4D8DFF,#2F5BE8)}
+.ic.b{background:linear-gradient(135deg,#7DD3FC,#3B82F6)}
+.ic.c{background:linear-gradient(135deg,#A78BFA,#6D4AFF)}
+.card h3{font-size:17px;font-weight:700;letter-spacing:-.2px}
+.card p{font-size:12.5px;color:var(--ink2);line-height:1.45}
+.tag{align-self:flex-start;font:700 11px inherit;padding:4px 10px;border-radius:999px;background:var(--tag);color:var(--on-tag)}
+.tag.new{background:var(--lime);color:var(--on-lime)}
+.meta{font-size:11.5px;color:var(--ink3);margin-top:auto}
+.act{display:flex;gap:8px;align-items:center}
+footer{display:flex;font-size:11.5px;color:var(--ink3);padding:0 4px}
+.badge{color:var(--lime-ink);font-weight:700}
+.name{position:absolute;right:20px;bottom:36px;font:700 11px inherit;letter-spacing:.4px;color:var(--ink3);text-transform:uppercase}
+
+/* A: Material 3 Expressive, biru Simpul */
+.t-a{--bg:#F4F6FF;--ink:#151B2E;--ink2:#444C66;--ink3:#737B96;--panel:#FFFFFF;--edge:0 solid transparent;--blur:none;--shadow:none;
+--r-lg:28px;--r-xl:40px;--r-card:32px;--r-btn:999px;--r-cta:16px;--r-logo:14px;--r-ic:18px;--r-art:36px;--r-shape:22px;
+--btn:#E7EBFB;--btn-edge:0 solid transparent;--tonal:#D9E2FF;--on-tonal:#0E2A78;--primary:#2F5BE8;--on-primary:#fff;
+--lime:#C6F06A;--on-lime:#243B00;--lime-ink:#3F7D14;--hero:#2F5BE8;--hero-ink:#fff;--hero-ink2:#DCE5FF;--h1:40px;--h1w:800;
+--art:#1F45C4;--art2:#8FB0FF;--chip-on:#151B2E;--on-chip:#fff;--field:#fff;--tag:#D9E2FF;--on-tag:#0E2A78;--card2:#EAF0FF;--card3:#F3EDFF;--blob-o:0}
+/* B: Material 3 Expressive, warna-warni */
+.t-b{--bg:#FFF8F2;--ink:#231A14;--ink2:#5B4A40;--ink3:#8A776B;--panel:#FFFFFF;--edge:0 solid transparent;--blur:none;--shadow:none;
+--r-lg:24px;--r-xl:48px;--r-card:28px;--r-btn:14px;--r-cta:999px;--r-logo:50%;--r-ic:50%;--r-art:50%;--r-shape:12px;
+--btn:#F6E9DF;--btn-edge:0 solid transparent;--tonal:#FFDCC7;--on-tonal:#5A1F00;--primary:#151B2E;--on-primary:#fff;
+--lime:#B9F27C;--on-lime:#16390A;--lime-ink:#2E7D32;--hero:#FFD9E4;--hero-ink:#3A0A1C;--hero-ink2:#6B2B40;--h1:44px;--h1w:800;
+--art:#FF8FB1;--art2:#2F5BE8;--chip-on:#2F5BE8;--on-chip:#fff;--field:#fff;--tag:#DCE5FF;--on-tag:#0E2A78;--card2:#E3F0FF;--card3:#E9F7D8;--blob-o:0}
+/* C: Liquid Glass, aurora */
+.t-c{--bg:#070A1A;--ink:#F2F5FF;--ink2:#B9C2E6;--ink3:#8690B8;--panel:rgba(255,255,255,.07);--edge:1px solid rgba(255,255,255,.18);--blur:blur(26px) saturate(170%);
+--shadow:inset 0 1px 0 rgba(255,255,255,.28),0 18px 40px rgba(0,0,0,.35);
+--r-lg:22px;--r-xl:30px;--r-card:26px;--r-btn:999px;--r-cta:999px;--r-logo:13px;--r-ic:15px;--r-art:26px;--r-shape:18px;
+--btn:rgba(255,255,255,.09);--btn-edge:1px solid rgba(255,255,255,.2);--tonal:rgba(77,141,255,.3);--on-tonal:#E3ECFF;--primary:rgba(255,255,255,.92);--on-primary:#0A1030;
+--lime:#B4E26B;--on-lime:#16300A;--lime-ink:#B4E26B;--hero:rgba(255,255,255,.08);--hero-ink:#fff;--hero-ink2:#C6CEEE;--h1:36px;--h1w:700;
+--art:rgba(255,255,255,.1);--art2:rgba(125,211,252,.75);--chip-on:rgba(255,255,255,.9);--on-chip:#0A1030;--field:rgba(255,255,255,.07);--tag:rgba(125,211,252,.2);--on-tag:#BEE9FF;
+--blob1:#3B5BFF;--blob2:#8B3DFF;--blob3:#00C2FF;--blob-o:.75}
+/* D: Liquid Glass, grafit */
+.t-d{--bg:#0B0C0F;--ink:#F3F4F6;--ink2:#A9AEBA;--ink3:#767C8A;--panel:rgba(255,255,255,.045);--edge:1px solid rgba(255,255,255,.1);--blur:blur(30px) saturate(140%);
+--shadow:inset 0 1px 0 rgba(255,255,255,.16),0 14px 34px rgba(0,0,0,.5);
+--r-lg:18px;--r-xl:22px;--r-card:20px;--r-btn:12px;--r-cta:12px;--r-logo:11px;--r-ic:13px;--r-art:18px;--r-shape:12px;
+--btn:rgba(255,255,255,.06);--btn-edge:1px solid rgba(255,255,255,.12);--tonal:rgba(255,255,255,.1);--on-tonal:#F3F4F6;--primary:#B4E26B;--on-primary:#16300A;
+--lime:#B4E26B;--on-lime:#16300A;--lime-ink:#B4E26B;--hero:rgba(255,255,255,.04);--hero-ink:#fff;--hero-ink2:#A9AEBA;--h1:34px;--h1w:650;
+--art:rgba(255,255,255,.06);--art2:rgba(77,141,255,.8);--chip-on:rgba(77,141,255,.28);--on-chip:#CFE0FF;--field:rgba(255,255,255,.04);--tag:rgba(255,255,255,.1);--on-tag:#D7DBE4;
+--blob1:#1E3A8A;--blob2:#0F2A5C;--blob3:#1B4D2B;--blob-o:.55}
+</style>
+</head>
+<body>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+<div class="app">
+  <header class="panel">
+    <div class="logo">S</div>
+    <div class="brand"><b>Simpul</b><span>Creative Apps Launcher</span></div>
+    <div class="sp"></div>
+    <div class="btn">Cek pembaruan</div>
+    <div class="btn donate">&#9829; Donasi</div>
+    <div class="btn">Tentang</div>
+    <div class="btn tonal">Pengaturan</div>
+  </header>
+  <section class="hero">
+    <div style="flex:1">
+      <h1>Semua aplikasi kreatifmu,<br>satu tempat.</h1>
+      <p>Pasang, perbarui, dan buka aplikasi Simpul Creative Apps. Gratis dan open source.</p>
+    </div>
+    <div class="art"><i></i><i></i></div>
+  </section>
+  <div class="row">
+    <div class="chip on">Semua 3</div><div class="chip">Terpasang 1</div><div class="chip">Pembaruan 1</div>
+    <div class="search">Cari aplikasi…</div>
+  </div>
+  <div class="grid">
+    <div class="card panel">
+      <div class="row"><div class="ic a">Sy</div><div class="sp"></div><span class="tag new">Pembaruan</span></div>
+      <h3>Simpul Sync</h3>
+      <p>Sinkronkan rekaman multi-kamera lewat suaranya, lalu ekspor ke editor videomu.</p>
+      <div class="meta">v4.1.11 terpasang · v4.2.0 tersedia</div>
+      <div class="act"><div class="btn primary">Perbarui</div><div class="btn">Buka</div></div>
+    </div>
+    <div class="card panel c2">
+      <div class="row"><div class="ic b">Vi</div><div class="sp"></div><span class="tag">Baru</span></div>
+      <h3>Simpul Video</h3>
+      <p>Editor video ringan untuk potong, susun, dan ekspor cepat.</p>
+      <div class="meta">v0.1.0 · 48 MB</div>
+      <div class="act"><div class="btn primary">Pasang</div><div class="btn">Detail</div></div>
+    </div>
+    <div class="card panel c3">
+      <div class="row"><div class="ic c">De</div><div class="sp"></div><span class="tag">Baru</span></div>
+      <h3>Simpul Design</h3>
+      <p>Kanvas desain untuk poster, konten sosial, dan presentasi.</p>
+      <div class="meta">v0.1.0 · 52 MB</div>
+      <div class="act"><div class="btn primary">Pasang</div><div class="btn">Detail</div></div>
+    </div>
+  </div>
+  <footer><span>Simpul Creative Launcher v1.0.0 · simpulproject.com</span><div class="sp"></div><span class="badge">&#9829; You are awesome</span></footer>
+</div>
+<div class="name" id="nm"></div>
+<script>
+var t=(location.search.match(/t=([a-d])/)||[0,'a'])[1];
+document.body.className='t-'+t;
+document.getElementById('nm').textContent={a:'A · Expressive Biru',b:'B · Expressive Ceria',c:'C · Liquid Glass Aurora',d:'D · Liquid Glass Grafit'}[t];
+</script>
+</body>
+</html>

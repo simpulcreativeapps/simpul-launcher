@@ -451,7 +451,7 @@ impl SimpulLauncherApp {
 
     fn window_frame(ctx: &egui::Context, pal: Palette) -> Frame {
         Frame::window(&ctx.style())
-            .fill(pal.bg_card)
+            .fill(pal.bg_window)
             .stroke(Stroke::new(1.0_f32, pal.border))
             .inner_margin(Margin::same(20))
     }

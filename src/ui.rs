@@ -128,6 +128,12 @@ struct Palette {
     cyan: Color32,
     cyan_soft: Color32,
     danger: Color32,
+    /// Latar jendela dialog: selalu padat supaya teks terbaca, juga di tema kaca.
+    bg_window: Color32,
+    hero_fill: Color32,
+    card_radius: f32,
+    control_radius: f32,
+    dark: bool,
 }
 
 impl Palette {
@@ -156,6 +162,11 @@ impl Palette {
                 cyan: Color32::from_rgb(56, 189, 248),
                 cyan_soft: Color32::from_rgba_unmultiplied(56, 189, 248, 36),
                 danger: Color32::from_rgb(239, 68, 68),
+                bg_window: Color32::from_rgb(18, 20, 31),
+                hero_fill: Color32::from_rgb(8, 9, 22),
+                card_radius: CARD_CORNER_RADIUS,
+                control_radius: CONTROL_CORNER_RADIUS,
+                dark: true,
             }
         } else {
             Self {
@@ -181,8 +192,166 @@ impl Palette {
                 cyan: Color32::from_rgb(8, 138, 168),
                 cyan_soft: Color32::from_rgba_unmultiplied(6, 182, 212, 26),
                 danger: Color32::from_rgb(210, 44, 44),
+                bg_window: Color32::from_rgb(255, 255, 255),
+                hero_fill: Color32::from_rgb(8, 9, 22),
+                card_radius: CARD_CORNER_RADIUS,
+                control_radius: CONTROL_CORNER_RADIUS,
+                dark: false,
             }
         }
+    }
+}
+
+fn glass(alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
+}
+
+impl Palette {
+    /// Palet untuk setiap pilihan tema. Tema baru berangkat dari palet bawaan lalu
+    /// mengganti permukaan, tinta, aksen, dan bentuk sudutnya.
+    fn for_choice(choice: ThemeChoice, system_dark: bool) -> Self {
+        match choice {
+            ThemeChoice::Dark => Self::for_theme(true),
+            ThemeChoice::Light => Self::for_theme(false),
+            ThemeChoice::System => Self::for_theme(system_dark),
+            ThemeChoice::ExpressiveBlue => Self {
+                bg_canvas: Color32::from_rgb(244, 246, 255),
+                bg_header: Color32::from_rgb(255, 255, 255),
+                bg_card: Color32::from_rgb(255, 255, 255),
+                bg_card_hover: Color32::from_rgb(234, 240, 255),
+                bg_elevated: Color32::from_rgb(231, 235, 251),
+                bg_subtle: Color32::from_rgb(217, 226, 255),
+                border: Color32::from_rgb(221, 227, 247),
+                border_strong: Color32::from_rgb(47, 91, 232),
+                ink_primary: Color32::from_rgb(21, 27, 46),
+                ink_secondary: Color32::from_rgb(68, 76, 102),
+                ink_muted: Color32::from_rgb(115, 123, 150),
+                accent: Color32::from_rgb(47, 91, 232),
+                accent_soft: Color32::from_rgb(217, 226, 255),
+                emerald: Color32::from_rgb(63, 125, 20),
+                emerald_soft: Color32::from_rgb(198, 240, 106),
+                bg_window: Color32::from_rgb(255, 255, 255),
+                hero_fill: Color32::from_rgb(47, 91, 232),
+                card_radius: 28.0,
+                control_radius: 17.0,
+                ..Self::for_theme(false)
+            },
+            ThemeChoice::ExpressiveWarm => Self {
+                bg_canvas: Color32::from_rgb(255, 248, 242),
+                bg_header: Color32::from_rgb(255, 255, 255),
+                bg_card: Color32::from_rgb(255, 255, 255),
+                bg_card_hover: Color32::from_rgb(255, 240, 230),
+                bg_elevated: Color32::from_rgb(246, 233, 223),
+                bg_subtle: Color32::from_rgb(255, 220, 199),
+                border: Color32::from_rgb(239, 220, 205),
+                border_strong: Color32::from_rgb(255, 143, 177),
+                ink_primary: Color32::from_rgb(35, 26, 20),
+                ink_secondary: Color32::from_rgb(91, 74, 64),
+                ink_muted: Color32::from_rgb(138, 119, 107),
+                accent: Color32::from_rgb(47, 91, 232),
+                accent_soft: Color32::from_rgb(220, 229, 255),
+                emerald: Color32::from_rgb(46, 125, 50),
+                emerald_soft: Color32::from_rgb(185, 242, 124),
+                bg_window: Color32::from_rgb(255, 255, 255),
+                hero_fill: Color32::from_rgb(21, 27, 46),
+                card_radius: 24.0,
+                control_radius: 12.0,
+                ..Self::for_theme(false)
+            },
+            ThemeChoice::GlassAurora => Self {
+                bg_canvas: Color32::TRANSPARENT,
+                bg_header: glass(7),
+                bg_card: glass(7),
+                bg_card_hover: glass(14),
+                bg_elevated: glass(10),
+                bg_subtle: glass(17),
+                border: glass(26),
+                border_strong: glass(60),
+                ink_primary: Color32::from_rgb(242, 245, 255),
+                ink_secondary: Color32::from_rgb(196, 204, 236),
+                ink_muted: Color32::from_rgb(150, 160, 198),
+                accent: Color32::from_rgb(77, 141, 255),
+                emerald: Color32::from_rgb(180, 226, 107),
+                bg_window: Color32::from_rgb(20, 22, 44),
+                hero_fill: glass(8),
+                card_radius: 24.0,
+                control_radius: 17.0,
+                ..Self::for_theme(true)
+            },
+            ThemeChoice::GlassGraphite => Self {
+                bg_canvas: Color32::TRANSPARENT,
+                bg_header: glass(5),
+                bg_card: glass(5),
+                bg_card_hover: glass(10),
+                bg_elevated: glass(7),
+                bg_subtle: glass(12),
+                border: glass(18),
+                border_strong: glass(40),
+                ink_primary: Color32::from_rgb(243, 244, 246),
+                ink_secondary: Color32::from_rgb(178, 183, 194),
+                ink_muted: Color32::from_rgb(126, 132, 146),
+                accent: Color32::from_rgb(77, 141, 255),
+                emerald: Color32::from_rgb(180, 226, 107),
+                bg_window: Color32::from_rgb(20, 21, 26),
+                hero_fill: glass(4),
+                card_radius: 18.0,
+                control_radius: 11.0,
+                ..Self::for_theme(true)
+            },
+        }
+    }
+}
+
+/// Latar tema Liquid Glass: bidang cahaya lembut yang sudah "diburamkan" saat dibuat,
+/// karena egui tidak punya efek blur latar. Digambar kecil lalu direntangkan.
+fn build_glass_backdrop(choice: ThemeChoice) -> egui::ColorImage {
+    const W: usize = 224;
+    const H: usize = 152;
+    // (pusat x, pusat y, jari-jari, warna, kekuatan) dalam koordinat 0..1
+    let (base, blobs): ([f32; 3], &[(f32, f32, f32, [f32; 3], f32)]) = match choice {
+        ThemeChoice::GlassAurora => (
+            [7.0, 10.0, 26.0],
+            &[
+                (0.10, 0.05, 0.42, [59.0, 91.0, 255.0], 0.85),
+                (0.95, 0.55, 0.46, [139.0, 61.0, 255.0], 0.80),
+                (0.48, 1.08, 0.36, [0.0, 194.0, 255.0], 0.75),
+            ],
+        ),
+        _ => (
+            [11.0, 12.0, 15.0],
+            &[
+                (0.08, 0.02, 0.46, [30.0, 58.0, 138.0], 0.60),
+                (0.98, 0.60, 0.48, [15.0, 42.0, 92.0], 0.55),
+                (0.42, 1.10, 0.36, [27.0, 77.0, 43.0], 0.45),
+            ],
+        ),
+    };
+    let aspect = W as f32 / H as f32;
+    let mut pixels = Vec::with_capacity(W * H);
+    for y in 0..H {
+        for x in 0..W {
+            let u = x as f32 / (W - 1) as f32;
+            let v = y as f32 / (H - 1) as f32;
+            let mut rgb = base;
+            for &(cx, cy, radius, color, strength) in blobs {
+                let dx = (u - cx) * aspect;
+                let dy = v - cy;
+                let d2 = (dx * dx + dy * dy) / (radius * radius);
+                let weight = strength * (-d2 * 1.6).exp();
+                for (channel, target) in rgb.iter_mut().zip(color) {
+                    *channel += (target - *channel) * weight;
+                }
+            }
+            pixels.push(Color32::from_rgb(
+                rgb[0].clamp(0.0, 255.0) as u8,
+                rgb[1].clamp(0.0, 255.0) as u8,
+                rgb[2].clamp(0.0, 255.0) as u8,
+            ));
+        }
+    }
+    egui::ColorImage {
+        size: [W, H],
+        pixels,
     }
 }
 
@@ -219,6 +388,7 @@ pub struct SimpulLauncherApp {
     ui_zoom: f32,
 
     egui_ctx: egui::Context,
+    glass_backdrop: Option<(ThemeChoice, TextureHandle)>,
     guard: GuardHub,
     guard_snap: GuardSnapshot,
     guard_seen_gen: u64,
@@ -238,7 +408,15 @@ pub struct SimpulLauncherApp {
 impl SimpulLauncherApp {
     pub fn new(ctx: &egui::Context, screenshot_target: Option<PathBuf>) -> Self {
         let ephemeral = screenshot_target.is_some();
-        let registry = load_or_init_registry(ephemeral);
+        let mut registry = load_or_init_registry(ephemeral);
+        if ephemeral {
+            if let Some(theme) = std::env::var("SIMPUL_SHOT_THEME")
+                .ok()
+                .and_then(|key| ThemeChoice::from_key(&key))
+            {
+                registry.settings.theme = theme;
+            }
+        }
         let integrations = detect_integrations(&registry.settings);
         let last_mtime = if ephemeral { None } else { registry_mtime() };
         let textures = BrandTextures::load(ctx);
@@ -277,6 +455,7 @@ impl SimpulLauncherApp {
             last_frame_secs: None,
             ui_zoom: 1.0,
             egui_ctx: ctx.clone(),
+            glass_backdrop: None,
             guard: GuardHub::default(),
             guard_snap: GuardSnapshot::default(),
             guard_seen_gen: 0,
@@ -481,19 +660,18 @@ impl SimpulLauncherApp {
     }
 
     fn apply_visuals(&self, ctx: &egui::Context) -> Palette {
-        let dark = match self.registry.settings.theme {
-            ThemeChoice::Dark => true,
-            ThemeChoice::Light => false,
-            ThemeChoice::System => ctx.style().visuals.dark_mode,
-        };
-        let pal = Palette::for_theme(dark);
+        let pal = Palette::for_choice(
+            self.registry.settings.theme,
+            ctx.style().visuals.dark_mode,
+        );
+        let dark = pal.dark;
         let mut visuals = if dark {
             egui::Visuals::dark()
         } else {
             egui::Visuals::light()
         };
         visuals.panel_fill = pal.bg_canvas;
-        visuals.window_fill = pal.bg_card;
+        visuals.window_fill = pal.bg_window;
         visuals.extreme_bg_color = pal.bg_header;
         visuals.faint_bg_color = pal.bg_subtle;
         visuals.override_text_color = Some(pal.ink_primary);
@@ -503,14 +681,41 @@ impl SimpulLauncherApp {
         visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, pal.border);
         visuals.widgets.inactive.bg_fill = pal.bg_elevated;
         visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, pal.border);
-        visuals.widgets.inactive.corner_radius = CONTROL_CORNER_RADIUS.into();
+        visuals.window_corner_radius = pal.card_radius.min(20.0).into();
+        visuals.menu_corner_radius = pal.control_radius.into();
+        visuals.widgets.inactive.corner_radius = pal.control_radius.into();
         visuals.widgets.hovered.bg_fill = pal.bg_subtle;
         visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, pal.accent);
-        visuals.widgets.hovered.corner_radius = CONTROL_CORNER_RADIUS.into();
+        visuals.widgets.hovered.corner_radius = pal.control_radius.into();
         visuals.widgets.active.bg_fill = pal.accent;
-        visuals.widgets.active.corner_radius = CONTROL_CORNER_RADIUS.into();
+        visuals.widgets.active.corner_radius = pal.control_radius.into();
         ctx.set_visuals(visuals);
         pal
+    }
+
+    /// Tema Liquid Glass: gambar bidang cahaya di belakang semua panel.
+    fn paint_glass_backdrop(&mut self, ctx: &egui::Context) {
+        let theme = self.registry.settings.theme;
+        if !theme.is_glass() {
+            self.glass_backdrop = None;
+            return;
+        }
+        if self.glass_backdrop.as_ref().map(|(t, _)| *t) != Some(theme) {
+            let texture = ctx.load_texture(
+                "simpul_glass_backdrop",
+                build_glass_backdrop(theme),
+                TextureOptions::LINEAR,
+            );
+            self.glass_backdrop = Some((theme, texture));
+        }
+        if let Some((_, texture)) = &self.glass_backdrop {
+            ctx.layer_painter(egui::LayerId::background()).image(
+                texture.id(),
+                ctx.screen_rect(),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
     }
 
     fn filtered_indices(&self) -> Vec<usize> {
@@ -791,28 +996,25 @@ impl SimpulLauncherApp {
                     self.splash_frames_left = 80;
                 }
 
-                let theme_label = match self.registry.settings.theme {
-                    ThemeChoice::Dark => "🌙 Dark",
-                    ThemeChoice::Light => "☀ Light",
-                    ThemeChoice::System => "◐ Auto",
-                };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new(theme_label)
-                                .size(FONT_CAPTION)
-                                .color(pal.ink_secondary),
-                        )
-                        .min_size(Vec2::new(66.0, SECONDARY_BTN_HEIGHT))
-                        .fill(pal.bg_elevated),
-                    )
-                    .clicked()
-                {
-                    self.registry.settings.theme = match self.registry.settings.theme {
-                        ThemeChoice::Dark => ThemeChoice::Light,
-                        ThemeChoice::Light => ThemeChoice::Dark,
-                        ThemeChoice::System => ThemeChoice::Dark,
-                    };
+                let mut picked_theme = None;
+                ui.menu_button(
+                    RichText::new("Tema")
+                        .size(FONT_CAPTION)
+                        .color(pal.ink_secondary),
+                    |ui| {
+                        for theme in ThemeChoice::ALL {
+                            let current = self.registry.settings.theme == theme;
+                            if ui.selectable_label(current, theme.label()).clicked() {
+                                picked_theme = Some(theme);
+                                ui.close_menu();
+                            }
+                        }
+                    },
+                )
+                .response
+                .on_hover_text(self.registry.settings.theme.label());
+                if let Some(theme) = picked_theme {
+                    self.registry.settings.theme = theme;
                     self.persist();
                 }
 
@@ -881,9 +1083,9 @@ impl SimpulLauncherApp {
     fn draw_hero_banner_and_bridge(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
         // Official Simpul Cosmic Banner + Integrated Claude/agy Quick Actions
         Frame::new()
-            .fill(Color32::from_rgb(8, 9, 22))
+            .fill(pal.hero_fill)
             .stroke(Stroke::new(1.2_f32, pal.border_strong))
-            .corner_radius(CARD_CORNER_RADIUS)
+            .corner_radius(pal.card_radius)
             .inner_margin(Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1255,7 +1457,7 @@ impl SimpulLauncherApp {
                 if is_selected { 1.6_f32 } else { 1.0_f32 },
                 stroke_color,
             ))
-            .corner_radius(CARD_CORNER_RADIUS)
+            .corner_radius(pal.card_radius)
             .inner_margin(Margin::same(CARD_INNER_PADDING))
             .show(ui, |ui| {
                 ui.set_max_width((card_w - 34.0).max(200.0));
@@ -1565,7 +1767,7 @@ impl SimpulLauncherApp {
         Frame::new()
             .fill(pal.bg_card)
             .stroke(Stroke::new(1.0_f32, pal.border))
-            .corner_radius(CARD_CORNER_RADIUS)
+            .corner_radius(pal.card_radius)
             .inner_margin(Margin::same(12))
             .show(ui, |ui| {
                 egui::Grid::new("simpul_apps_table")
@@ -2590,7 +2792,7 @@ impl SimpulLauncherApp {
                                 pal.accent
                             },
                         ))
-                        .corner_radius(CONTROL_CORNER_RADIUS)
+                        .corner_radius(pal.control_radius)
                         .inner_margin(Margin::symmetric(12, 9))
                         .show(ui, |ui| {
                             ui.set_width(TOAST_WIDTH - 26.0);
@@ -2616,6 +2818,7 @@ impl eframe::App for SimpulLauncherApp {
         self.last_frame_secs = Some(now);
 
         let pal = self.apply_visuals(ctx);
+        self.paint_glass_backdrop(ctx);
         self.handle_zoom_shortcuts(ctx);
         self.poll_external_cli_changes(now);
         self.sync_guard(ctx, now);
