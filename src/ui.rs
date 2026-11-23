@@ -469,6 +469,8 @@ pub struct SimpulLauncherApp {
     bug_open: bool,
     bug_text: String,
     bug_include_log: bool,
+    /// Hasil kiriman laporan yang sedang berjalan di thread latar.
+    bug_send: Option<std::sync::Arc<std::sync::Mutex<Option<Result<u64, String>>>>>,
 }
 
 impl SimpulLauncherApp {
@@ -550,6 +552,7 @@ impl SimpulLauncherApp {
             bug_open: shot_view == "bug",
             bug_text: String::new(),
             bug_include_log: false,
+            bug_send: None,
         }
     }
 

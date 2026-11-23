@@ -6,6 +6,17 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.1.0] - 2026-11-23
+
+### Ditambahkan
+- **Kirim laporan** satu klik: laporan bug dikirim langsung ke penerima Simpul
+  (`simpul-lapor`) tanpa aplikasi email. Isi yang dikirim tetap ditampilkan lebih dulu,
+  dan hasilnya tampil sebagai nomor laporan atau pesan gagal.
+
+### Diubah
+- "Kirim lewat email" menjadi pilihan cadangan "Lewat email".
+- Keterangan privasi di jendela Tentang dan README menyebut pengiriman laporan ini.
+
 ## [1.0.1] - 2026-11-23
 
 Hasil uji langsung pada launcher yang terpasang dari installer 1.0.0.

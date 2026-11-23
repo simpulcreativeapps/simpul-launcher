@@ -541,7 +541,8 @@ impl SimpulLauncherApp {
                     egui::Label::new(
                         RichText::new(
                             "Tanpa telemetri. Launcher hanya mengambil daftar status dan versi \
-                             yang bertanda tangan, tidak mengirim data Anda.",
+                             yang bertanda tangan, dan hanya mengirim laporan bug saat Anda \
+                             menekan Kirim laporan.",
                         )
                         .size(FONT_MICRO)
                         .color(pal.ink_muted),
@@ -752,6 +753,37 @@ impl SimpulLauncherApp {
         let mut open = true;
         let mut close = false;
         let mut diagnostics = suite::diagnostics_enabled();
+
+        // Ambil hasil kiriman bila thread latar sudah selesai.
+        let finished = self
+            .bug_send
+            .as_ref()
+            .and_then(|slot| slot.lock().ok().and_then(|mut guard| guard.take()));
+        if let Some(result) = finished {
+            self.bug_send = None;
+            match result {
+                Ok(id) => {
+                    let text = if id > 0 {
+                        format!("Laporan #{id} terkirim. Terima kasih!")
+                    } else {
+                        "Laporan terkirim. Terima kasih!".to_string()
+                    };
+                    self.push_toast(now, text, false);
+                    suite::log_event("laporan bug terkirim");
+                    self.bug_text.clear();
+                    close = true;
+                }
+                Err(reason) => {
+                    self.push_toast(
+                        now,
+                        format!("Laporan belum terkirim: {reason}. Tulisanmu masih ada, coba lagi atau pakai Salin isi."),
+                        true,
+                    );
+                }
+            }
+        }
+        let sending = self.bug_send.is_some();
+
         egui::Window::new("Laporkan bug")
             .open(&mut open)
             .collapsible(false)
@@ -796,7 +828,7 @@ impl SimpulLauncherApp {
                     egui::Label::new(
                         RichText::new(
                             "Log mencatat kejadian ringkas (hasil cek status, kegagalan unduh atau \
-                             buka aplikasi) tanpa nama akun. Log tidak pernah dikirim otomatis; \
+                             buka aplikasi) tanpa nama akun. Log hanya ikut terkirim bila dicentang di bawah; \
                              mematikan izin menghapus log.",
                         )
                         .size(FONT_MICRO)
@@ -840,38 +872,34 @@ impl SimpulLauncherApp {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let send = egui::Button::new(
-                        RichText::new("Kirim lewat email").strong().color(pal.on_accent),
+                        RichText::new(if sending { "Mengirim…" } else { "Kirim laporan" })
+                            .strong()
+                            .color(pal.on_accent),
                     )
                     .min_size(Vec2::new(150.0, PRIMARY_BTN_HEIGHT))
                     .fill(pal.accent);
                     if ui
-                        .add_enabled(!self.bug_text.trim().is_empty(), send)
-                        .on_hover_text(format!("Membuka aplikasi email ke {CONTACT_EMAIL}"))
+                        .add_enabled(!sending && self.bug_text.trim().chars().count() >= 5, send)
+                        .on_hover_text("Mengirim isi di atas langsung ke tim Simpul")
                         .clicked()
                     {
-                        let link =
-                            suite::bug_report_mailto(LAUNCHER_NAME, LAUNCHER_VERSION, &description);
-                        // Isi selalu ikut disalin: kalau komputer ini tidak punya aplikasi
-                        // email, pengguna tinggal menempelkannya ke email apa pun.
-                        ctx.copy_text(body.clone());
-                        match suite::open_with_system(&link) {
-                            Ok(()) => self.push_toast(
-                                now,
-                                format!(
-                                    "Aplikasi email dibuka. Kalau tidak muncul, isi laporan sudah disalin: tempel ke email untuk {CONTACT_EMAIL}."
-                                ),
-                                false,
-                            ),
-                            Err(_) => self.push_toast(
-                                now,
-                                format!(
-                                    "Aplikasi email tidak bisa dibuka. Isi laporan sudah disalin: tempel ke email untuk {CONTACT_EMAIL}."
-                                ),
-                                true,
-                            ),
+                        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+                        self.bug_send = Some(slot.clone());
+                        let text = description.clone();
+                        let repaint = ctx.clone();
+                        let spawned = std::thread::Builder::new()
+                            .name("simpul-lapor".into())
+                            .spawn(move || {
+                                let result = suite::send_report(&text);
+                                if let Ok(mut guard) = slot.lock() {
+                                    *guard = Some(result);
+                                }
+                                repaint.request_repaint();
+                            });
+                        if spawned.is_err() {
+                            self.bug_send = None;
+                            self.push_toast(now, "Laporan tidak bisa dikirim sekarang.", true);
                         }
-                        self.bug_text.clear();
-                        close = true;
                     }
                     if ui
                         .add(
@@ -882,6 +910,27 @@ impl SimpulLauncherApp {
                     {
                         ctx.copy_text(body.clone());
                         self.push_toast(now, "Isi laporan disalin.", false);
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new("Lewat email")
+                                .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT)),
+                        )
+                        .on_hover_text(format!("Membuka aplikasi email ke {CONTACT_EMAIL}"))
+                        .clicked()
+                    {
+                        let link =
+                            suite::bug_report_mailto(LAUNCHER_NAME, LAUNCHER_VERSION, &description);
+                        ctx.copy_text(body.clone());
+                        let opened = suite::open_with_system(&link).is_ok();
+                        self.push_toast(
+                            now,
+                            format!(
+                                "{} Isi laporan sudah disalin: tempel ke email untuk {CONTACT_EMAIL}.",
+                                if opened { "Aplikasi email dibuka." } else { "Aplikasi email tidak bisa dibuka." }
+                            ),
+                            !opened,
+                        );
                     }
                 });
             });

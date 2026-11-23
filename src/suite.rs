@@ -375,6 +375,46 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
+/// Penerima laporan Simpul (Cloudflare Worker, repo `simpul-lapor`). Tidak ada rahasia di
+/// sini: penerima yang memegang token dan membatasi jumlah kiriman.
+pub const REPORT_URL: &str = "https://simpul-lapor.simpul-lapor.workers.dev/v1/report";
+const REPORT_APP_ID: &str = "launcher";
+
+/// Kirim satu laporan. Hanya dipanggil saat pengguna menekan "Kirim laporan"; isinya
+/// sama dengan yang ditampilkan di jendela laporan. Mengembalikan nomor laporan.
+pub fn send_report(description: &str) -> Result<u64, String> {
+    let payload = serde_json::json!({
+        "app": REPORT_APP_ID,
+        "version": LAUNCHER_VERSION,
+        "os": os_label(),
+        "kind": "bug",
+        "description": description.trim(),
+    });
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent(format!("simpul-launcher/{LAUNCHER_VERSION}"))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(REPORT_URL)
+        .header("content-type", "application/json")
+        .header("x-simpul-client", "1")
+        .body(payload.to_string())
+        .send()
+        .map_err(|_| "tidak bisa terhubung ke penerima laporan".to_string())?;
+    let status = response.status();
+    let value: serde_json::Value =
+        serde_json::from_str(&response.text().unwrap_or_default()).unwrap_or_default();
+    if status.is_success() && value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(value.get("id").and_then(serde_json::Value::as_u64).unwrap_or(0))
+    } else {
+        Err(value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| format!("penerima menjawab {}", status.as_u16()), str::to_string))
+    }
+}
+
 /// Buka tautan (mis. `mailto:`) lewat pengendali bawaan sistem operasi.
 pub fn open_with_system(link: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
