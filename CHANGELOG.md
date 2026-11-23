@@ -6,6 +6,11 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+### Diubah
+- README ditulis ulang untuk pengguna: cara memasang dan mencocokkan sha256, daftar
+  kemampuan, privasi, CLI, dan cara membangun dari kode. Nama aplikasi lama dihapus, dan
+  tombol Download, Donasi, serta website ditambahkan di bagian atas.
+
 ## [1.5.1] - 2026-11-23
 
 ### Ditambahkan
