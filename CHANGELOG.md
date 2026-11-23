@@ -6,6 +6,31 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.5.0] - 2026-11-23
+
+Tata letak dibangun ulang mengikuti rancangan acuan dari pemilik proyek.
+
+### Ditambahkan
+- **Bilah samping**: logo, lalu Beranda, Aplikasi, Pembaruan (dengan jumlah yang
+  menunggu), Pengaturan, dan Tentang; di dasarnya kartu ajakan menuju situs Simpul.
+- **Bilah atas**: kolom cari besar, pilihan Tema, Donasi, lonceng pembaruan, dan tombol
+  akun yang memuat Masuk, Cek pembaruan, CLI & agen, dan Laporkan bug.
+- **Banner Beranda** selebar layar dengan judul dua baris, versi launcher, tiga aksi,
+  dan tanda Simpul berpendar di sisi kanan.
+- Huruf tebal untuk judul dan tombol. Di Windows memakai Segoe UI milik sistem, dibaca
+  saat berjalan dan tidak ikut dibagikan.
+
+### Diubah
+- Tab filter dan tombol tampilan menjadi bentuk pil setinggi 40 px dengan ikon.
+- Kartu aplikasi lebih besar: ikon 92 px, nama tebal, keterangan di samping ikon, serta
+  tombol Buka, Detail, dan menu berdampingan.
+- Baris status memisahkan versi dan sertifikat; "Tanpa sertifikat" tidak lagi hijau.
+- Ukuran jendela bawaan 1280x760 dan ukuran terkecil 1000x620.
+
+### Dihapus
+- Header lama dengan tujuh tombol, banner lama bergambar, dan kolom cari kedua di baris
+  tab (pencarian sekarang hanya di bilah atas).
+
 ## [1.4.0] - 2026-11-23
 
 ### Ditambahkan

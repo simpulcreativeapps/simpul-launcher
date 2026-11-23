@@ -1,21 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 // Verified window & layout constants (see MECHANICS.md & mechanics.json)
-pub const DEFAULT_WINDOW_WIDTH: f32 = 1120.0;
+pub const DEFAULT_WINDOW_WIDTH: f32 = 1280.0;
 pub const DEFAULT_WINDOW_HEIGHT: f32 = 760.0;
-pub const MIN_WINDOW_WIDTH: f32 = 720.0;
-pub const MIN_WINDOW_HEIGHT: f32 = 500.0;
+pub const MIN_WINDOW_WIDTH: f32 = 1000.0;
+pub const MIN_WINDOW_HEIGHT: f32 = 620.0;
 pub const SCREENSHOT_WARMUP_FRAMES: u32 = 120;
 
 pub const PRIMARY_BTN_HEIGHT: f32 = 34.0;
-pub const TOOLBAR_CONTROL_HEIGHT: f32 = 40.0;
 pub const BADGE_PILL_HEIGHT: f32 = 24.0;
 pub const SECONDARY_BTN_HEIGHT: f32 = 28.0;
-pub const CARD_ICON_SIZE: f32 = 44.0;
+pub const CARD_ICON_SIZE: f32 = 92.0;
 pub const HERO_ICON_SIZE: f32 = 64.0;
-pub const HEADER_MARK_SIZE: f32 = 32.0;
-pub const CARD_MIN_WIDTH: f32 = 320.0;
-pub const CARD_INNER_PADDING: i8 = 16;
+pub const CARD_MIN_WIDTH: f32 = 470.0;
+pub const CARD_INNER_PADDING: i8 = 24;
 pub const CARD_GRID_SPACING: f32 = 16.0;
 pub const CARD_CORNER_RADIUS: f32 = 12.0;
 pub const CARD_HOVER_ANIM_SECS: f32 = 0.3;

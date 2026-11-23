@@ -15,9 +15,9 @@ use crate::models::{
     CARD_HOVER_ANIM_SECS, CARD_HOVER_TINT_FACTOR, CARD_ICON_SIZE, CARD_INNER_PADDING,
     CARD_MIN_WIDTH, CONTROL_CORNER_RADIUS, DRAWER_ANIM_SECS,
     DRAWER_MAX_WIDTH, DRAWER_MIN_WIDTH, FONT_BODY, FONT_CAPTION, FONT_CARD_TITLE, FONT_HEADING,
-    FONT_MICRO, HEADER_MARK_SIZE, HERO_ICON_SIZE, LIVE_SYNC_POLL_SECS, PRIMARY_BTN_HEIGHT,
-    SCREENSHOT_WARMUP_FRAMES, SECONDARY_BTN_HEIGHT, TOAST_ERROR_DURATION_SECS,
-    TOAST_INFO_DURATION_SECS, TOAST_OFFSET_X, TOAST_OFFSET_Y, TOAST_WIDTH, TOOLBAR_CONTROL_HEIGHT,
+    FONT_MICRO, HERO_ICON_SIZE, LIVE_SYNC_POLL_SECS, PRIMARY_BTN_HEIGHT,
+    SCREENSHOT_WARMUP_FRAMES, TOAST_ERROR_DURATION_SECS,
+    TOAST_INFO_DURATION_SECS, TOAST_OFFSET_X, TOAST_OFFSET_Y, TOAST_WIDTH,
     UI_ZOOM_MAX, UI_ZOOM_MIN, UI_ZOOM_STEP,
 };
 use crate::registry::{
@@ -29,21 +29,15 @@ use crate::registry::{
 use crate::suite::{self, GuardHub, GuardSnapshot};
 
 mod account_ui;
+mod shell_ui;
 mod suite_ui;
 
-/// Hero selalu berlatar gelap di semua tema, jadi tintanya tetap.
-const HERO_FILL: Color32 = Color32::from_rgb(12, 16, 38);
-const HERO_INK: Color32 = Color32::from_rgb(236, 240, 255);
-const HERO_PRIMARY_FILL: Color32 = Color32::from_rgb(236, 240, 255);
-const HERO_PRIMARY_INK: Color32 = Color32::from_rgb(12, 16, 38);
-const HERO_QUIET_FILL: Color32 = Color32::from_rgb(38, 46, 82);
 
 /// Tebal cincin fokus papan ketik.
 const FOCUS_RING_WIDTH: f32 = 2.0;
 
 const SIMPUL_ICON_BYTES: &[u8] = include_bytes!("../assets/simpul-icon.png");
 const SIMPUL_SPLASH_BYTES: &[u8] = include_bytes!("../assets/simpul-splash.png");
-const SIMPUL_HERO_BYTES: &[u8] = include_bytes!("../assets/simpul-hero-banner.png");
 
 /// Sekitar 1,8 detik pada layar 60 Hz; klik atau Esc melewatinya.
 const INITIAL_SPLASH_FRAMES: u32 = 110;
@@ -53,7 +47,6 @@ const SUPPORTER_SPLASH_FRAMES: u32 = 170;
 struct BrandTextures {
     icon: Option<TextureHandle>,
     splash: Option<TextureHandle>,
-    hero: Option<TextureHandle>,
 }
 
 impl BrandTextures {
@@ -61,7 +54,6 @@ impl BrandTextures {
         Self {
             icon: decode_png_texture(ctx, "simpul_official_icon", SIMPUL_ICON_BYTES),
             splash: decode_png_texture(ctx, "simpul_official_splash", SIMPUL_SPLASH_BYTES),
-            hero: decode_png_texture(ctx, "simpul_official_hero", SIMPUL_HERO_BYTES),
         }
     }
 }
@@ -435,6 +427,8 @@ pub struct SimpulLauncherApp {
     frame_counter: u32,
 
     filter: FilterTab,
+    /// Halaman yang dipilih di bilah samping.
+    nav: shell_ui::NavPage,
     search_query: String,
     drawer: RightDrawer,
     settings_open: bool,
@@ -514,6 +508,7 @@ impl SimpulLauncherApp {
         }
         let integrations = detect_integrations(&registry.settings);
         let last_mtime = if ephemeral { None } else { registry_mtime() };
+        shell_ui::install_fonts(ctx);
         let textures = BrandTextures::load(ctx);
         let shot_view = if ephemeral {
             std::env::var("SIMPUL_SHOT_VIEW").unwrap_or_default()
@@ -535,6 +530,7 @@ impl SimpulLauncherApp {
             screenshot_saved: false,
             frame_counter: 0,
             filter: FilterTab::All,
+            nav: shell_ui::NavPage::Home,
             search_query: String::new(),
             drawer: RightDrawer::None,
             settings_open: shot_view == "settings",
@@ -1047,274 +1043,6 @@ impl SimpulLauncherApp {
         }
     }
 
-    fn draw_header(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
-        let update_count = self.registry.apps.iter().filter(|a| a.has_update()).count();
-
-        ui.horizontal(|ui| {
-            ui.set_min_height(TOOLBAR_CONTROL_HEIGHT);
-
-            // Simpul brand mark
-            self.draw_official_brand_mark(ui, HEADER_MARK_SIZE + 4.0);
-
-            ui.add_space(6.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Simpul")
-                            .size(18.5)
-                            .strong()
-                            .color(pal.ink_primary),
-                    );
-                    draw_pill(
-                        ui,
-                        "Creative Apps Launcher",
-                        pal.accent_soft,
-                        pal.accent_ink,
-                        FONT_MICRO,
-                    );
-                });
-                ui.label(
-                    RichText::new("Pasang, perbarui, dan buka aplikasi Simpul Creative Apps")
-                        .size(FONT_MICRO)
-                        .color(pal.ink_muted),
-                );
-            });
-
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 7.0;
-                // Semua kontrol header minimal setinggi tombol sekunder (target klik >= 24 px).
-                ui.spacing_mut().interact_size.y = SECONDARY_BTN_HEIGHT;
-
-                let settings_btn = egui::Button::new(
-                    RichText::new("Pengaturan")
-                        .size(FONT_CAPTION)
-                        .color(pal.ink_primary),
-                )
-                .min_size(Vec2::new(82.0, SECONDARY_BTN_HEIGHT))
-                .fill(pal.bg_elevated);
-                if ui.add(settings_btn).clicked() {
-                    self.settings_open = true;
-                }
-                self.draw_suite_header_buttons(ui, pal);
-
-                let mut picked_theme = None;
-                ui.menu_button(
-                    RichText::new("Tema")
-                        .size(FONT_CAPTION)
-                        .color(pal.ink_secondary),
-                    |ui| {
-                        for theme in ThemeChoice::ALL {
-                            let current = self.registry.settings.theme == theme;
-                            if ui.selectable_label(current, theme.label()).clicked() {
-                                picked_theme = Some(theme);
-                                ui.close_menu();
-                            }
-                        }
-                    },
-                )
-                .response
-                .on_hover_text(self.registry.settings.theme.label());
-                if let Some(theme) = picked_theme {
-                    self.registry.settings.theme = theme;
-                    self.persist();
-                }
-
-                if update_count > 0 {
-                    let upd_btn = egui::Button::new(
-                        RichText::new(format!("Perbarui semua ({update_count})"))
-                            .size(FONT_CAPTION)
-                            .strong()
-                            .color(pal.on_accent),
-                    )
-                    .min_size(Vec2::new(108.0, SECONDARY_BTN_HEIGHT))
-                    .fill(pal.accent);
-                    if ui.add(upd_btn).clicked() {
-                        let ids: Vec<String> = self
-                            .registry
-                            .apps
-                            .iter()
-                            .filter(|a| a.has_update())
-                            .map(|a| a.id.clone())
-                            .collect();
-                        for id in ids {
-                            self.enqueue_install(now, &id, AgentOrigin::SimpulSuite);
-                        }
-                    }
-                } else {
-                    let chk_btn = egui::Button::new(
-                        RichText::new("Cek pembaruan")
-                            .size(FONT_CAPTION)
-                            .color(pal.ink_primary),
-                    )
-                    .min_size(Vec2::new(108.0, SECONDARY_BTN_HEIGHT))
-                    .fill(pal.bg_elevated);
-                    if ui.add(chk_btn).clicked() {
-                        self.integrations = detect_integrations(&self.registry.settings);
-                        let ctx = ui.ctx().clone();
-                        self.start_guard_check(&ctx, true);
-                        self.push_toast(now, "Memeriksa pembaruan…", false);
-                    }
-                }
-
-                let hub_active = matches!(self.drawer, RightDrawer::AgentHub);
-                let hub_btn = egui::Button::new(
-                    RichText::new("CLI & agen")
-                        .size(FONT_CAPTION)
-                        .strong()
-                        .color(if hub_active {
-                            pal.on_accent
-                        } else {
-                            pal.cyan
-                        }),
-                )
-                .min_size(Vec2::new(134.0, SECONDARY_BTN_HEIGHT))
-                .fill(if hub_active { pal.accent } else { pal.cyan_soft })
-                .stroke(Stroke::new(1.0_f32, pal.cyan));
-                if ui.add(hub_btn).clicked() {
-                    self.drawer = if hub_active {
-                        RightDrawer::None
-                    } else {
-                        RightDrawer::AgentHub
-                    };
-                }
-            });
-        });
-    }
-
-    fn draw_hero_banner_and_bridge(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
-        // Official Simpul Cosmic Banner + Integrated Claude/agy Quick Actions
-        Frame::new()
-            .fill(HERO_FILL)
-            .stroke(Stroke::new(1.2_f32, pal.border_strong))
-            .corner_radius(pal.card_radius)
-            .inner_margin(Margin::symmetric(14, 10))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Left side: Official Simpul Hero Banner artwork (aspect-preserved 4.04:1)
-                    let banner_h: f32 = 84.0;
-                    let banner_w = (banner_h * (1080.0 / 267.0)).min(ui.available_width() * 0.44);
-                    let (b_rect, b_resp) =
-                        ui.allocate_exact_size(Vec2::new(banner_w, banner_h), Sense::click());
-                    if let Some(ref hero_tex) = self.textures.hero {
-                        ui.painter().image(
-                            hero_tex.id(),
-                            b_rect,
-                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                    }
-                    if b_resp
-                        .on_hover_text("Putar ulang layar pembuka")
-                        .clicked()
-                    {
-                        self.splash_total_frames = 80;
-                        self.splash_frames_left = 80;
-                    }
-
-                    ui.add_space(12.0);
-
-                    // Kanan: satu pesan dan satu aksi utama
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 6.0;
-                        ui.label(
-                            RichText::new("Semua aplikasi kreatifmu, satu tempat")
-                                .size(FONT_CARD_TITLE + 2.0)
-                                .strong()
-                                .color(HERO_INK),
-                        );
-                        ui.label(
-                            RichText::new(
-                                "Daftar di bawah mengikuti aplikasi yang sudah dirilis. Agen seperti Claude juga bisa mengimpor aplikasi lewat CLI.",
-                            )
-                            .size(FONT_CAPTION)
-                            .color(HERO_INK),
-                        );
-
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            let imp_btn = egui::Button::new(
-                                RichText::new("+ Impor aplikasi")
-                                    .size(FONT_CAPTION)
-                                    .strong()
-                                    .color(HERO_PRIMARY_INK),
-                            )
-                            .min_size(Vec2::new(132.0, 28.0))
-                            .fill(HERO_PRIMARY_FILL);
-                            if ui.add(imp_btn).clicked() {
-                                self.import_form.open = true;
-                                self.import_form.error_banner = None;
-                            }
-
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("Pindai komputer")
-                                            .size(FONT_CAPTION)
-                                            .color(HERO_INK),
-                                    )
-                                    .min_size(Vec2::new(118.0, 28.0))
-                                    .fill(HERO_QUIET_FILL),
-                                )
-                                .on_hover_text(
-                                    "Pindai ulang aplikasi Simpul yang terpasang di komputer ini",
-                                )
-                                .clicked()
-                            {
-                                let updated = reconcile_installed_apps(&mut self.registry);
-                                self.persist();
-                                let linked_cnt = self
-                                    .registry
-                                    .apps
-                                    .iter()
-                                    .filter(|a| current_launchable_target(a).is_some())
-                                    .count();
-                                if updated.is_empty() {
-                                    self.push_toast(
-                                        now,
-                                        format!("Pindai selesai: {linked_cnt} aplikasi terpasang siap dibuka."),
-                                        false,
-                                    );
-                                } else {
-                                    self.push_toast(
-                                        now,
-                                        format!(
-                                            "Pindai selesai: {} aplikasi diperbarui ({linked_cnt} siap dibuka).",
-                                            updated.len()
-                                        ),
-                                        false,
-                                    );
-                                }
-                            }
-
-                            let copy_cmd =
-                                "simpul-creative-launcher import ./simpul-app.json --agent claude --install";
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("Salin perintah CLI")
-                                            .size(FONT_CAPTION)
-                                            .color(HERO_INK),
-                                    )
-                                    .min_size(Vec2::new(130.0, 28.0))
-                                    .fill(HERO_QUIET_FILL),
-                                )
-                                .on_hover_text(copy_cmd)
-                                .clicked()
-                            {
-                                ui.ctx().copy_text(copy_cmd.to_string());
-                                self.push_toast(
-                                    now,
-                                    "Perintah CLI disalin.",
-                                    false,
-                                );
-                            }
-                        });
-                    });
-                });
-            });
-    }
-
     fn draw_toolbar(&mut self, ui: &mut egui::Ui, pal: Palette) {
         let total_visible = self.registry.apps.iter().filter(|a| !a.hidden).count();
         let deploy_cnt = self
@@ -1349,39 +1077,40 @@ impl SimpulLauncherApp {
             .count();
         let hidden_cnt = self.registry.apps.iter().filter(|a| a.hidden).count();
 
+        const TAB_HEIGHT: f32 = 40.0;
         ui.horizontal(|ui| {
-            ui.set_min_height(34.0);
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.set_min_height(TAB_HEIGHT);
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().button_padding = Vec2::new(16.0, 6.0);
+            ui.spacing_mut().interact_size.y = TAB_HEIGHT;
 
             let mut tabs = vec![
-                (FilterTab::All, format!("Semua ({total_visible})")),
-                (FilterTab::DeployReady, format!("Build rilis ({deploy_cnt})")),
-                (FilterTab::Installed, format!("Terpasang ({inst_cnt})")),
-                (FilterTab::Updates, format!("Pembaruan ({upd_cnt})")),
-                (FilterTab::AgentImported, format!("Dari agen ({agent_cnt})")),
+                (FilterTab::All, "⊞", format!("Semua ({total_visible})")),
+                (FilterTab::DeployReady, "📦", format!("Build rilis ({deploy_cnt})")),
+                (FilterTab::Installed, "✔", format!("Terpasang ({inst_cnt})")),
+                (FilterTab::Updates, "🔄", format!("Pembaruan ({upd_cnt})")),
+                (FilterTab::AgentImported, ">_", format!("Dari agen ({agent_cnt})")),
             ];
             if hidden_cnt > 0 || self.filter == FilterTab::Hidden {
-                tabs.push((FilterTab::Hidden, format!("Disembunyikan ({hidden_cnt})")));
+                tabs.push((FilterTab::Hidden, "🚫", format!("Disembunyikan ({hidden_cnt})")));
             }
 
-            for (tab, label) in tabs {
+            for (tab, icon, label) in tabs {
                 let selected = self.filter == tab;
-                let btn = egui::Button::new(
-                    RichText::new(label)
-                        .size(FONT_CAPTION)
-                        .strong()
-                        .color(if selected {
-                            pal.on_accent
-                        } else {
-                            pal.ink_secondary
-                        }),
-                )
-                .min_size(Vec2::new(0.0, SECONDARY_BTN_HEIGHT))
-                .fill(if selected { pal.accent } else { pal.bg_card })
-                .stroke(Stroke::new(
-                    1.0_f32,
-                    if selected { pal.accent } else { pal.border },
-                ));
+                let mut text = RichText::new(format!("{icon}   {label}"))
+                    .size(FONT_BODY - 1.0)
+                    .color(if selected { pal.on_accent } else { pal.ink_primary });
+                if selected {
+                    text = text.family(shell_ui::bold());
+                }
+                let btn = egui::Button::new(text)
+                    .min_size(Vec2::new(0.0, TAB_HEIGHT))
+                    .corner_radius(TAB_HEIGHT / 2.0)
+                    .fill(if selected { pal.accent } else { pal.bg_card })
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        if selected { pal.accent } else { pal.border },
+                    ));
                 if ui.add(btn).clicked() {
                     self.filter = tab;
                 }
@@ -1391,47 +1120,30 @@ impl SimpulLauncherApp {
                 ui.spacing_mut().item_spacing.x = 6.0;
 
                 let is_table = self.registry.settings.view_mode == ViewMode::Table;
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("☰ Tabel").size(FONT_CAPTION).color(if is_table {
-                                pal.on_accent
-                            } else {
-                                pal.ink_secondary
-                            }),
-                        )
-                        .min_size(Vec2::new(62.0, SECONDARY_BTN_HEIGHT))
-                        .fill(if is_table { pal.accent } else { pal.bg_card }),
+                let toggle = |icon: &str, active: bool| {
+                    egui::Button::new(
+                        RichText::new(icon)
+                            .size(FONT_BODY + 2.0)
+                            .color(if active { pal.on_accent } else { pal.ink_secondary }),
                     )
-                    .clicked()
-                {
+                    .min_size(Vec2::splat(TAB_HEIGHT))
+                    .corner_radius(TAB_HEIGHT / 2.0)
+                    .fill(if active { pal.accent } else { pal.bg_card })
+                    .stroke(Stroke::new(1.0_f32, if active { pal.accent } else { pal.border }))
+                };
+                if ui.add(toggle("☰", is_table)).on_hover_text("Tampilan tabel").clicked() {
                     self.registry.settings.view_mode = ViewMode::Table;
                     self.persist();
                 }
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("⊞ Grid")
-                                .size(FONT_CAPTION)
-                                .color(if !is_table {
-                                    pal.on_accent
-                                } else {
-                                    pal.ink_secondary
-                                }),
-                        )
-                        .min_size(Vec2::new(60.0, SECONDARY_BTN_HEIGHT))
-                        .fill(if !is_table { pal.accent } else { pal.bg_card }),
-                    )
-                    .clicked()
-                {
+                if ui.add(toggle("⊞", !is_table)).on_hover_text("Tampilan kartu").clicked() {
                     self.registry.settings.view_mode = ViewMode::Grid;
                     self.persist();
                 }
 
                 egui::ComboBox::from_id_salt("simpul_sort_combo")
-                    .width(122.0)
+                    .width(140.0)
                     .selected_text(
-                        RichText::new(self.registry.settings.sort_key.label()).size(FONT_CAPTION),
+                        RichText::new(self.registry.settings.sort_key.label()).size(FONT_BODY - 1.0),
                     )
                     .show_ui(ui, |ui| {
                         for key in [
@@ -1452,12 +1164,6 @@ impl SimpulLauncherApp {
                             }
                         }
                     });
-
-                let search_edit = TextEdit::singleline(&mut self.search_query)
-                    .hint_text("🔍 Cari aplikasi…")
-                    .desired_width(215.0)
-                    .font(FontId::proportional(FONT_CAPTION));
-                ui.add_sized([215.0, SECONDARY_BTN_HEIGHT], search_edit);
             });
         });
     }
@@ -1536,7 +1242,7 @@ impl SimpulLauncherApp {
             .show(ui, |ui| {
                 ui.set_max_width((card_w - 34.0).max(200.0));
                 ui.set_min_width((card_w - 34.0).max(200.0));
-                ui.set_min_height(166.0);
+                ui.set_min_height(150.0);
 
                 ui.horizontal(|ui| {
                     let (icon_rect, icon_resp) =
@@ -1546,15 +1252,15 @@ impl SimpulLauncherApp {
                         self.drawer = RightDrawer::AppDetails(app.id.clone());
                     }
 
-                    ui.add_space(6.0);
+                    ui.add_space(16.0);
                     ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 3.0;
+                        ui.spacing_mut().item_spacing.y = 6.0;
                         ui.horizontal(|ui| {
                             let title_resp = ui.add(
                                 egui::Label::new(
                                     RichText::new(&app.name)
-                                        .size(FONT_CARD_TITLE)
-                                        .strong()
+                                        .family(shell_ui::bold())
+                                        .size(25.0)
                                         .color(pal.ink_primary),
                                 )
                                 .sense(Sense::click()),
@@ -1568,7 +1274,7 @@ impl SimpulLauncherApp {
                         });
 
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 5.0;
+                            ui.spacing_mut().item_spacing.x = 6.0;
                             let (p_bg, p_fg) = match app.profile {
                                 BuildProfile::Release => (pal.emerald_soft, pal.emerald),
                                 BuildProfile::Staging => (pal.amber_soft, pal.amber),
@@ -1577,7 +1283,7 @@ impl SimpulLauncherApp {
                                     pal.danger,
                                 ),
                             };
-                            draw_pill(ui, app.profile.short_label(), p_bg, p_fg, 10.5);
+                            draw_pill(ui, app.profile.short_label(), p_bg, p_fg, FONT_CAPTION);
 
                             let (o_bg, o_fg) = match app.origin {
                                 AgentOrigin::Claude => (pal.purple_soft, pal.purple),
@@ -1585,30 +1291,27 @@ impl SimpulLauncherApp {
                                 AgentOrigin::SimpulSuite => (pal.bg_subtle, pal.ink_secondary),
                                 AgentOrigin::CliManual => (pal.emerald_soft, pal.emerald),
                             };
-                            draw_pill(ui, app.origin.label(), o_bg, o_fg, 10.5);
+                            draw_pill(ui, app.origin.label(), o_bg, o_fg, FONT_CAPTION);
                         });
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&app.tagline)
+                                    .size(FONT_BODY)
+                                    .color(pal.ink_secondary),
+                            )
+                            .wrap(),
+                        );
                     });
                 });
 
-                ui.add_space(7.0);
-                ui.label(
-                    RichText::new(&app.tagline)
-                        .size(FONT_CAPTION)
-                        .color(pal.ink_secondary),
-                );
-
-                ui.add_space(5.0);
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let status_str = match &app.install_state {
                         InstallState::Installed { version, .. } => {
                             if app.has_update() {
-                                format!(
-                                    "v{version} terpasang • v{} tersedia • {}",
-                                    app.latest_version,
-                                    self.certificate_label(&app.id)
-                                )
+                                format!("v{version} terpasang • v{} tersedia", app.latest_version)
                             } else {
-                                format!("v{version} terpasang • Terbaru • {}", self.certificate_label(&app.id))
+                                format!("✔  v{version} terpasang • Terbaru")
                             }
                         }
                         InstallState::NotInstalled => {
@@ -1625,7 +1328,19 @@ impl SimpulLauncherApp {
                     } else {
                         pal.ink_muted
                     };
-                    ui.label(RichText::new(status_str).size(FONT_MICRO).color(status_col));
+                    ui.label(RichText::new(status_str).size(FONT_CAPTION).color(status_col));
+                    if app.install_state.is_installed() {
+                        let label = self.certificate_label(&app.id);
+                        let color = match label {
+                            "Bersertifikat" => pal.emerald,
+                            "Sertifikat tidak sah" => pal.danger,
+                            _ => pal.ink_muted,
+                        };
+                        ui.label(RichText::new("•").size(FONT_CAPTION).color(pal.ink_muted));
+                        ui.label(RichText::new(label).size(FONT_CAPTION).color(color)).on_hover_text(
+                            "Sertifikat diberikan untuk aplikasi yang dipasang lewat launcher saat kamu masuk dengan akun Simpul.",
+                        );
+                    }
                 });
 
                 ui.add_space(8.0);
@@ -1707,12 +1422,13 @@ impl SimpulLauncherApp {
                                     }
                                 } else {
                                     let open_btn = egui::Button::new(
-                                        RichText::new("Buka")
-                                            .size(FONT_BODY)
-                                            .strong()
+                                        RichText::new("▶    Buka")
+                                            .family(shell_ui::bold())
+                                            .size(FONT_BODY + 1.0)
                                             .color(pal.on_accent),
                                     )
-                                    .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
+                                    .min_size(Vec2::new(156.0, 46.0))
+                                    .corner_radius(23.0)
                                     .fill(pal.accent);
                                     if ui.add(open_btn).clicked() {
                                         self.launch_app(now, &app);
@@ -1721,12 +1437,13 @@ impl SimpulLauncherApp {
                             }
                             InstallState::NotInstalled => {
                                 let inst_btn = egui::Button::new(
-                                    RichText::new("Pasang")
-                                        .size(FONT_BODY)
-                                        .strong()
+                                    RichText::new("⬇    Pasang")
+                                        .family(shell_ui::bold())
+                                        .size(FONT_BODY + 1.0)
                                         .color(pal.on_accent),
                                 )
-                                .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
+                                .min_size(Vec2::new(156.0, 46.0))
+                                .corner_radius(23.0)
                                 .fill(pal.accent)
                                 .stroke(Stroke::new(1.2_f32, pal.accent));
                                 if ui.add(inst_btn).clicked() {
@@ -1735,9 +1452,19 @@ impl SimpulLauncherApp {
                             }
                         }
 
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.menu_button(
-                                RichText::new("•••").size(FONT_MICRO).color(pal.ink_secondary),
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(196.0, 46.0),
+                            Layout::right_to_left(Align::Center),
+                            |ui| {
+                            egui::menu::menu_custom_button(
+                                ui,
+                                egui::Button::new(
+                                    RichText::new("•••").size(FONT_BODY).color(pal.ink_secondary),
+                                )
+                                .min_size(Vec2::splat(46.0))
+                                .corner_radius(23.0)
+                                .fill(pal.bg_card)
+                                .stroke(Stroke::new(1.0_f32, pal.border)),
                                 |ui| {
                                     ui.set_min_width(190.0);
                                     if ui.button("Detail aplikasi dan catatan rilis").clicked() {
@@ -1821,12 +1548,14 @@ impl SimpulLauncherApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new("Detail")
-                                            .size(FONT_CAPTION)
-                                            .color(pal.ink_secondary),
+                                        RichText::new("ℹ    Detail")
+                                            .size(FONT_BODY + 1.0)
+                                            .color(pal.ink_primary),
                                     )
-                                    .min_size(Vec2::new(56.0, PRIMARY_BTN_HEIGHT))
-                                    .fill(pal.bg_elevated),
+                                    .min_size(Vec2::new(132.0, 46.0))
+                                    .corner_radius(23.0)
+                                    .fill(pal.bg_card)
+                                    .stroke(Stroke::new(1.0_f32, pal.border)),
                                 )
                                 .clicked()
                             {
@@ -2933,15 +2662,28 @@ impl eframe::App for SimpulLauncherApp {
             return;
         }
 
-        egui::TopBottomPanel::top("simpul_header")
+        egui::SidePanel::left("simpul_sidebar")
+            .exact_width(shell_ui::SIDEBAR_WIDTH)
+            .resizable(false)
             .frame(
                 Frame::new()
                     .fill(pal.bg_header)
                     .stroke(Stroke::new(1.0_f32, pal.border))
-                    .inner_margin(Margin::symmetric(20, 8)),
+                    .inner_margin(Margin::symmetric(16, 18)),
             )
             .show(ctx, |ui| {
-                self.draw_header(ui, pal, now);
+                self.draw_sidebar(ui, pal);
+            });
+
+        egui::TopBottomPanel::top("simpul_header")
+            .frame(
+                Frame::new()
+                    .fill(pal.bg_canvas)
+                    .inner_margin(Margin::symmetric(24, 14)),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                self.draw_topbar(ui, pal, now);
             });
 
         self.draw_notice_bar(ctx, pal, now);
@@ -2992,13 +2734,15 @@ impl eframe::App for SimpulLauncherApp {
             .frame(
                 Frame::new()
                     .fill(pal.bg_canvas)
-                    .inner_margin(Margin::symmetric(20, 12)),
+                    .inner_margin(Margin::symmetric(24, 4)),
             )
             .show(ctx, |ui| {
-                self.draw_hero_banner_and_bridge(ui, pal, now);
-                ui.add_space(10.0);
+                if self.nav == shell_ui::NavPage::Home {
+                    self.draw_hero(ui, pal, now);
+                    ui.add_space(16.0);
+                }
                 self.draw_toolbar(ui, pal);
-                ui.add_space(10.0);
+                ui.add_space(14.0);
 
                 let indices = self.filtered_indices();
                 ScrollArea::vertical()
@@ -3197,7 +2941,6 @@ mod design_tests {
             }
           }
         }
-        check_hero(&mut failures);
         assert!(failures.is_empty(), "kontras di bawah 4.5:1:\n{}", failures.join("\n"));
         assert!(
             low_contrast_parts.is_empty(),
@@ -3206,23 +2949,10 @@ mod design_tests {
         );
     }
 
-    fn check_hero(failures: &mut Vec<String>) {
-        for (what, fg, bg) in [
-            ("teks hero", HERO_INK, HERO_FILL),
-            ("tombol utama hero", HERO_PRIMARY_INK, HERO_PRIMARY_FILL),
-            ("tombol sekunder hero", HERO_INK, HERO_QUIET_FILL),
-        ] {
-            let ratio = contrast(fg, bg);
-            if ratio < 4.5 {
-                failures.push(format!("hero: {what} = {ratio:.2}"));
-            }
-        }
-    }
-
     #[test]
     fn controls_meet_minimum_target_size() {
         // WCAG 2.2 butir 2.5.8: target klik minimal 24 x 24 px.
-        assert!(SECONDARY_BTN_HEIGHT >= 24.0);
+        assert!(crate::models::SECONDARY_BTN_HEIGHT >= 24.0);
         assert!(PRIMARY_BTN_HEIGHT >= 24.0);
         assert!(BADGE_PILL_HEIGHT >= 24.0 || BADGE_PILL_HEIGHT > 0.0);
     }

@@ -158,30 +158,6 @@ impl SimpulLauncherApp {
         self.refresh_certificates();
     }
 
-    pub(super) fn draw_account_button(&mut self, ui: &mut egui::Ui, pal: Palette) {
-        let label = match &self.account {
-            Some(found) => {
-                let first = found.name.split_whitespace().next().unwrap_or("Akun");
-                first.chars().take(14).collect::<String>()
-            }
-            None => "Masuk".to_string(),
-        };
-        if ui
-            .add(
-                egui::Button::new(RichText::new(label).size(FONT_CAPTION).color(pal.ink_secondary))
-                    .min_size(Vec2::new(70.0, SECONDARY_BTN_HEIGHT))
-                    .fill(pal.bg_elevated),
-            )
-            .on_hover_text("Akun Simpul (opsional)")
-            .clicked()
-        {
-            self.account_open = true;
-            self.about_open = false;
-            self.bug_open = false;
-            self.donate_open = false;
-        }
-    }
-
     pub(super) fn draw_account_window(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
         if !self.account_open {
             return;

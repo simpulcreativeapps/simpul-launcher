@@ -586,43 +586,7 @@ impl SimpulLauncherApp {
     }
 
     /// Tombol Donasi dan Tentang di header.
-    pub(super) fn draw_suite_header_buttons(&mut self, ui: &mut egui::Ui, pal: Palette) {
-        self.draw_account_button(ui, pal);
-        if ui
-            .add(
-                egui::Button::new(
-                    RichText::new("Tentang")
-                        .size(FONT_CAPTION)
-                        .color(pal.ink_secondary),
-                )
-                .min_size(Vec2::new(78.0, SECONDARY_BTN_HEIGHT))
-                .fill(pal.bg_elevated),
-            )
-            .clicked()
-        {
-            self.about_open = true;
-            self.bug_open = false;
-            self.donate_open = false;
-        }
-        if ui
-            .add(
-                egui::Button::new(
-                    RichText::new("♥ Donasi")
-                        .size(FONT_CAPTION)
-                        .strong()
-                        .color(pal.emerald),
-                )
-                .min_size(Vec2::new(78.0, SECONDARY_BTN_HEIGHT))
-                .fill(pal.emerald_soft),
-            )
-            .on_hover_text("Dukung developer Simpul lewat Saweria")
-            .clicked()
-        {
-            self.open_donate();
-        }
-    }
-
-    fn open_donate(&mut self) {
+    pub(super) fn open_donate(&mut self) {
         self.donate_agree = false;
         self.donate_sent = false;
         self.donate_open = true;
@@ -758,7 +722,7 @@ impl SimpulLauncherApp {
                     if ui
                         .add(
                             egui::Button::new(
-                                RichText::new("♥ Donasi").strong().color(pal.on_emerald),
+                                RichText::new("Donasi").strong().color(pal.on_emerald),
                             )
                             .min_size(Vec2::new(110.0, PRIMARY_BTN_HEIGHT))
                             .fill(pal.emerald),
