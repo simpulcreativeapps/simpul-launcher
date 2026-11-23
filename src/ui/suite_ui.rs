@@ -236,7 +236,7 @@ impl SimpulLauncherApp {
                     if ui
                         .add(
                             egui::Button::new(
-                                RichText::new("Uninstall launcher").strong().color(Color32::WHITE),
+                                RichText::new("Uninstall launcher").strong().color(pal.on_danger),
                             )
                             .min_size(Vec2::new(180.0, PRIMARY_BTN_HEIGHT))
                             .fill(pal.danger),
@@ -549,7 +549,7 @@ impl SimpulLauncherApp {
                     if ui
                         .add(
                             egui::Button::new(
-                                RichText::new("♥ Donasi").strong().color(Color32::WHITE),
+                                RichText::new("♥ Donasi").strong().color(pal.on_emerald),
                             )
                             .min_size(Vec2::new(110.0, PRIMARY_BTN_HEIGHT))
                             .fill(pal.emerald),
@@ -643,7 +643,7 @@ impl SimpulLauncherApp {
                                 egui::Button::new(
                                     RichText::new("Saya sudah berdonasi")
                                         .strong()
-                                        .color(Color32::WHITE),
+                                        .color(pal.on_emerald),
                                 )
                                 .min_size(Vec2::new(170.0, PRIMARY_BTN_HEIGHT))
                                 .fill(pal.emerald),
@@ -713,7 +713,7 @@ impl SimpulLauncherApp {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     let go = egui::Button::new(
-                        RichText::new("Lanjut ke Saweria").strong().color(Color32::WHITE),
+                        RichText::new("Lanjut ke Saweria").strong().color(pal.on_emerald),
                     )
                     .min_size(Vec2::new(150.0, PRIMARY_BTN_HEIGHT))
                     .fill(pal.emerald);
@@ -834,7 +834,7 @@ impl SimpulLauncherApp {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     let send = egui::Button::new(
-                        RichText::new("Kirim lewat email").strong().color(Color32::WHITE),
+                        RichText::new("Kirim lewat email").strong().color(pal.on_accent),
                     )
                     .min_size(Vec2::new(150.0, PRIMARY_BTN_HEIGHT))
                     .fill(pal.accent);

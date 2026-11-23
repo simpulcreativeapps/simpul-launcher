@@ -20,15 +20,22 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 - Status hijau, kuning, dan merah dari `simpul-manifest` lewat `simpul-guard`:
   pemberitahuan, hitung mundur, dan layar "dihentikan" dengan tombol Uninstall.
 - Pembaruan launcher dan aplikasi diunduh dari manifest, dengan pengecekan sha256.
+- `design/PRINSIP.md`: prinsip desain yang dipakai, mana yang diuji otomatis, dan yang belum terpenuhi.
 - Berkas `NOTICE` dan teks lisensi ArtCraft Launcher sebagai karya asal.
 
 ### Diubah
+- Palet semua tema disusun ulang supaya setiap teks berkontras minimal 4,5:1 (WCAG 2.2),
+  dijaga oleh tes otomatis. Tema Liquid Glass memakai kaca gelap di atas latar yang diredupkan.
+- Hero disederhanakan: satu judul, satu aksi utama, tanpa label status yang tidak dicek.
+- Antarmuka utama memakai Bahasa Indonesia secara konsisten; tombol Splash dihapus dari header.
+- Tombol Pasang menjadi aksi utama kartu aplikasi.
 - Tombol "Check updates" sekarang benar-benar memeriksa manifest.
 - Registry naik ke versi 2; entri contoh dari versi lama dibuang saat launcher dibuka.
 - Teks antarmuka tidak lagi menyebut aplikasi yang belum ada.
 - Versi launcher dibaca dari satu sumber (`Cargo.toml`).
 
 ### Diperbaiki
+- Teks putih pada tombol terpilih dan tombol Pasang tidak terbaca di beberapa tema.
 - Kolom `version` dan `id` pada manifest impor disaring, sehingga instalasi dan
   penghapusan tidak bisa keluar dari folder aplikasi.
 - Aplikasi tanpa paket tidak lagi ditandai "terpasang".

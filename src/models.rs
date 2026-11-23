@@ -108,7 +108,7 @@ impl BuildProfile {
 
     pub fn short_label(self) -> &'static str {
         match self {
-            Self::Release => "Deploy Ready",
+            Self::Release => "Rilis",
             Self::Staging => "Staging",
             Self::Debug => "Debug Build",
         }
@@ -127,7 +127,7 @@ pub enum AgentOrigin {
 impl AgentOrigin {
     pub fn label(self) -> &'static str {
         match self {
-            Self::SimpulSuite => "Simpul Suite",
+            Self::SimpulSuite => "Simpul",
             Self::Claude => "Claude AI",
             Self::AntigravityAgy => "Antigravity (agy)",
             Self::CliManual => "Simpul CLI",

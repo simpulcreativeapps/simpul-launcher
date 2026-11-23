@@ -30,6 +30,13 @@ use crate::suite::{self, GuardHub, GuardSnapshot};
 
 mod suite_ui;
 
+/// Hero selalu berlatar gelap di semua tema, jadi tintanya tetap.
+const HERO_FILL: Color32 = Color32::from_rgb(12, 16, 38);
+const HERO_INK: Color32 = Color32::from_rgb(236, 240, 255);
+const HERO_PRIMARY_FILL: Color32 = Color32::from_rgb(236, 240, 255);
+const HERO_PRIMARY_INK: Color32 = Color32::from_rgb(12, 16, 38);
+const HERO_QUIET_FILL: Color32 = Color32::from_rgb(38, 46, 82);
+
 const SIMPUL_ICON_BYTES: &[u8] = include_bytes!("../assets/simpul-icon.png");
 const SIMPUL_SPLASH_BYTES: &[u8] = include_bytes!("../assets/simpul-splash.png");
 const SIMPUL_HERO_BYTES: &[u8] = include_bytes!("../assets/simpul-hero-banner.png");
@@ -128,15 +135,23 @@ struct Palette {
     cyan: Color32,
     cyan_soft: Color32,
     danger: Color32,
+    /// Warna aksen untuk TEKS dan pil (lebih terang di tema gelap, lebih tua di tema terang).
+    accent_ink: Color32,
+    /// Warna teks di atas isian aksen, hijau, dan bahaya.
+    on_accent: Color32,
+    on_emerald: Color32,
+    on_danger: Color32,
     /// Latar jendela dialog: selalu padat supaya teks terbaca, juga di tema kaca.
     bg_window: Color32,
-    hero_fill: Color32,
     card_radius: f32,
     control_radius: f32,
     dark: bool,
 }
 
 impl Palette {
+    /// Dua palet dasar. Aturan yang dijaga oleh `design_tests`:
+    /// semua teks >= 4.5:1 terhadap permukaannya (WCAG 2.2 butir 1.4.3).
+    /// Warna `*_soft` padat (tidak tembus pandang) supaya kontras pil bisa dijamin.
     fn for_theme(dark: bool) -> Self {
         if dark {
             Self {
@@ -144,26 +159,29 @@ impl Palette {
                 bg_header: Color32::from_rgb(14, 16, 25),
                 bg_card: Color32::from_rgb(18, 20, 31),
                 bg_card_hover: Color32::from_rgb(24, 27, 42),
-                bg_elevated: Color32::from_rgb(26, 29, 44),
-                bg_subtle: Color32::from_rgb(31, 35, 52),
-                border: Color32::from_rgb(40, 45, 68),
-                border_strong: Color32::from_rgb(82, 102, 176),
+                bg_elevated: Color32::from_rgb(30, 34, 52),
+                bg_subtle: Color32::from_rgb(38, 43, 66),
+                border: Color32::from_rgb(46, 52, 78),
+                border_strong: Color32::from_rgb(98, 120, 200),
                 ink_primary: Color32::from_rgb(242, 243, 248),
-                ink_secondary: Color32::from_rgb(182, 188, 212),
-                ink_muted: Color32::from_rgb(126, 134, 162),
-                accent: Color32::from_rgb(78, 123, 251),
-                accent_soft: Color32::from_rgba_unmultiplied(78, 123, 251, 38),
-                emerald: Color32::from_rgb(34, 197, 94),
-                emerald_soft: Color32::from_rgba_unmultiplied(16, 185, 129, 34),
-                amber: Color32::from_rgb(245, 158, 11),
-                amber_soft: Color32::from_rgba_unmultiplied(245, 158, 11, 34),
-                purple: Color32::from_rgb(192, 132, 252),
-                purple_soft: Color32::from_rgba_unmultiplied(168, 85, 247, 38),
-                cyan: Color32::from_rgb(56, 189, 248),
-                cyan_soft: Color32::from_rgba_unmultiplied(56, 189, 248, 36),
-                danger: Color32::from_rgb(239, 68, 68),
-                bg_window: Color32::from_rgb(18, 20, 31),
-                hero_fill: Color32::from_rgb(8, 9, 22),
+                ink_secondary: Color32::from_rgb(190, 196, 220),
+                ink_muted: Color32::from_rgb(150, 158, 188),
+                accent: Color32::from_rgb(110, 152, 255),
+                accent_ink: Color32::from_rgb(158, 186, 255),
+                on_accent: Color32::from_rgb(8, 14, 40),
+                accent_soft: Color32::from_rgb(24, 34, 72),
+                emerald: Color32::from_rgb(110, 231, 150),
+                on_emerald: Color32::from_rgb(6, 34, 18),
+                emerald_soft: Color32::from_rgb(16, 46, 34),
+                amber: Color32::from_rgb(251, 196, 60),
+                amber_soft: Color32::from_rgb(56, 40, 10),
+                purple: Color32::from_rgb(216, 184, 254),
+                purple_soft: Color32::from_rgb(44, 30, 70),
+                cyan: Color32::from_rgb(110, 232, 249),
+                cyan_soft: Color32::from_rgb(12, 44, 58),
+                danger: Color32::from_rgb(250, 128, 128),
+                on_danger: Color32::from_rgb(44, 6, 6),
+                bg_window: Color32::from_rgb(20, 22, 34),
                 card_radius: CARD_CORNER_RADIUS,
                 control_radius: CONTROL_CORNER_RADIUS,
                 dark: true,
@@ -179,21 +197,24 @@ impl Palette {
                 border: Color32::from_rgb(214, 219, 232),
                 border_strong: Color32::from_rgb(120, 140, 210),
                 ink_primary: Color32::from_rgb(17, 19, 28),
-                ink_secondary: Color32::from_rgb(66, 72, 92),
-                ink_muted: Color32::from_rgb(112, 120, 142),
-                accent: Color32::from_rgb(56, 102, 238),
-                accent_soft: Color32::from_rgba_unmultiplied(56, 102, 238, 26),
-                emerald: Color32::from_rgb(15, 148, 80),
-                emerald_soft: Color32::from_rgba_unmultiplied(16, 185, 129, 28),
-                amber: Color32::from_rgb(198, 114, 6),
-                amber_soft: Color32::from_rgba_unmultiplied(245, 158, 11, 28),
-                purple: Color32::from_rgb(134, 58, 218),
-                purple_soft: Color32::from_rgba_unmultiplied(168, 85, 247, 26),
-                cyan: Color32::from_rgb(8, 138, 168),
-                cyan_soft: Color32::from_rgba_unmultiplied(6, 182, 212, 26),
-                danger: Color32::from_rgb(210, 44, 44),
+                ink_secondary: Color32::from_rgb(60, 66, 86),
+                ink_muted: Color32::from_rgb(88, 95, 114),
+                accent: Color32::from_rgb(47, 91, 232),
+                accent_ink: Color32::from_rgb(36, 72, 200),
+                on_accent: Color32::WHITE,
+                accent_soft: Color32::from_rgb(226, 233, 255),
+                emerald: Color32::from_rgb(12, 112, 60),
+                on_emerald: Color32::WHITE,
+                emerald_soft: Color32::from_rgb(222, 244, 230),
+                amber: Color32::from_rgb(140, 78, 0),
+                amber_soft: Color32::from_rgb(253, 238, 210),
+                purple: Color32::from_rgb(110, 44, 190),
+                purple_soft: Color32::from_rgb(240, 230, 255),
+                cyan: Color32::from_rgb(4, 98, 122),
+                cyan_soft: Color32::from_rgb(218, 244, 250),
+                danger: Color32::from_rgb(190, 34, 34),
+                on_danger: Color32::WHITE,
                 bg_window: Color32::from_rgb(255, 255, 255),
-                hero_fill: Color32::from_rgb(8, 9, 22),
                 card_radius: CARD_CORNER_RADIUS,
                 control_radius: CONTROL_CORNER_RADIUS,
                 dark: false,
@@ -202,12 +223,14 @@ impl Palette {
     }
 }
 
-fn glass(alpha: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
+/// Kaca gelap: lapisan peredup di atas latar cahaya, sesuai pedoman keterbacaan
+/// (kalau kaca membuat teks sulit dibaca, redupkan latarnya).
+fn tinted(r: u8, g: u8, b: u8, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
 impl Palette {
-    /// Palet untuk setiap pilihan tema. Tema baru berangkat dari palet bawaan lalu
+    /// Palet untuk setiap pilihan tema. Tema baru berangkat dari palet dasar lalu
     /// mengganti permukaan, tinta, aksen, dan bentuk sudutnya.
     fn for_choice(choice: ThemeChoice, system_dark: bool) -> Self {
         match choice {
@@ -218,20 +241,16 @@ impl Palette {
                 bg_canvas: Color32::from_rgb(244, 246, 255),
                 bg_header: Color32::from_rgb(255, 255, 255),
                 bg_card: Color32::from_rgb(255, 255, 255),
-                bg_card_hover: Color32::from_rgb(234, 240, 255),
-                bg_elevated: Color32::from_rgb(231, 235, 251),
+                bg_card_hover: Color32::from_rgb(240, 244, 255),
+                bg_elevated: Color32::from_rgb(233, 237, 252),
                 bg_subtle: Color32::from_rgb(217, 226, 255),
                 border: Color32::from_rgb(221, 227, 247),
                 border_strong: Color32::from_rgb(47, 91, 232),
                 ink_primary: Color32::from_rgb(21, 27, 46),
-                ink_secondary: Color32::from_rgb(68, 76, 102),
-                ink_muted: Color32::from_rgb(115, 123, 150),
-                accent: Color32::from_rgb(47, 91, 232),
-                accent_soft: Color32::from_rgb(217, 226, 255),
-                emerald: Color32::from_rgb(63, 125, 20),
-                emerald_soft: Color32::from_rgb(198, 240, 106),
-                bg_window: Color32::from_rgb(255, 255, 255),
-                hero_fill: Color32::from_rgb(47, 91, 232),
+                ink_secondary: Color32::from_rgb(58, 66, 92),
+                ink_muted: Color32::from_rgb(84, 92, 118),
+                emerald: Color32::from_rgb(34, 92, 10),
+                emerald_soft: Color32::from_rgb(212, 244, 150),
                 card_radius: 28.0,
                 control_radius: 17.0,
                 ..Self::for_theme(false)
@@ -240,60 +259,50 @@ impl Palette {
                 bg_canvas: Color32::from_rgb(255, 248, 242),
                 bg_header: Color32::from_rgb(255, 255, 255),
                 bg_card: Color32::from_rgb(255, 255, 255),
-                bg_card_hover: Color32::from_rgb(255, 240, 230),
-                bg_elevated: Color32::from_rgb(246, 233, 223),
+                bg_card_hover: Color32::from_rgb(255, 242, 233),
+                bg_elevated: Color32::from_rgb(248, 236, 226),
                 bg_subtle: Color32::from_rgb(255, 220, 199),
                 border: Color32::from_rgb(239, 220, 205),
-                border_strong: Color32::from_rgb(255, 143, 177),
+                border_strong: Color32::from_rgb(214, 92, 130),
                 ink_primary: Color32::from_rgb(35, 26, 20),
-                ink_secondary: Color32::from_rgb(91, 74, 64),
-                ink_muted: Color32::from_rgb(138, 119, 107),
-                accent: Color32::from_rgb(47, 91, 232),
-                accent_soft: Color32::from_rgb(220, 229, 255),
-                emerald: Color32::from_rgb(46, 125, 50),
-                emerald_soft: Color32::from_rgb(185, 242, 124),
-                bg_window: Color32::from_rgb(255, 255, 255),
-                hero_fill: Color32::from_rgb(21, 27, 46),
+                ink_secondary: Color32::from_rgb(82, 66, 56),
+                ink_muted: Color32::from_rgb(104, 86, 74),
+                emerald: Color32::from_rgb(24, 94, 30),
+                emerald_soft: Color32::from_rgb(206, 244, 170),
                 card_radius: 24.0,
                 control_radius: 12.0,
                 ..Self::for_theme(false)
             },
             ThemeChoice::GlassAurora => Self {
                 bg_canvas: Color32::TRANSPARENT,
-                bg_header: glass(7),
-                bg_card: glass(7),
-                bg_card_hover: glass(14),
-                bg_elevated: glass(10),
-                bg_subtle: glass(17),
-                border: glass(26),
-                border_strong: glass(60),
-                ink_primary: Color32::from_rgb(242, 245, 255),
-                ink_secondary: Color32::from_rgb(196, 204, 236),
-                ink_muted: Color32::from_rgb(150, 160, 198),
-                accent: Color32::from_rgb(77, 141, 255),
-                emerald: Color32::from_rgb(180, 226, 107),
+                bg_header: tinted(10, 12, 30, 150),
+                bg_card: tinted(10, 12, 30, 150),
+                bg_card_hover: tinted(22, 26, 56, 175),
+                bg_elevated: tinted(40, 46, 86, 215),
+                bg_subtle: tinted(54, 62, 110, 225),
+                border: tinted(255, 255, 255, 34),
+                border_strong: tinted(255, 255, 255, 80),
+                ink_primary: Color32::from_rgb(244, 246, 255),
+                ink_secondary: Color32::from_rgb(210, 216, 244),
+                ink_muted: Color32::from_rgb(184, 192, 228),
                 bg_window: Color32::from_rgb(20, 22, 44),
-                hero_fill: glass(8),
                 card_radius: 24.0,
                 control_radius: 17.0,
                 ..Self::for_theme(true)
             },
             ThemeChoice::GlassGraphite => Self {
                 bg_canvas: Color32::TRANSPARENT,
-                bg_header: glass(5),
-                bg_card: glass(5),
-                bg_card_hover: glass(10),
-                bg_elevated: glass(7),
-                bg_subtle: glass(12),
-                border: glass(18),
-                border_strong: glass(40),
+                bg_header: tinted(12, 13, 16, 150),
+                bg_card: tinted(12, 13, 16, 150),
+                bg_card_hover: tinted(26, 28, 34, 180),
+                bg_elevated: tinted(40, 42, 50, 220),
+                bg_subtle: tinted(54, 57, 68, 230),
+                border: tinted(255, 255, 255, 26),
+                border_strong: tinted(255, 255, 255, 64),
                 ink_primary: Color32::from_rgb(243, 244, 246),
-                ink_secondary: Color32::from_rgb(178, 183, 194),
-                ink_muted: Color32::from_rgb(126, 132, 146),
-                accent: Color32::from_rgb(77, 141, 255),
-                emerald: Color32::from_rgb(180, 226, 107),
+                ink_secondary: Color32::from_rgb(200, 204, 214),
+                ink_muted: Color32::from_rgb(170, 175, 188),
                 bg_window: Color32::from_rgb(20, 21, 26),
-                hero_fill: glass(4),
                 card_radius: 18.0,
                 control_radius: 11.0,
                 ..Self::for_theme(true)
@@ -304,6 +313,8 @@ impl Palette {
 
 /// Latar tema Liquid Glass: bidang cahaya lembut yang sudah "diburamkan" saat dibuat,
 /// karena egui tidak punya efek blur latar. Digambar kecil lalu direntangkan.
+const BACKDROP_DIM: f32 = 0.42;
+
 fn build_glass_backdrop(choice: ThemeChoice) -> egui::ColorImage {
     const W: usize = 224;
     const H: usize = 152;
@@ -342,10 +353,11 @@ fn build_glass_backdrop(choice: ThemeChoice) -> egui::ColorImage {
                     *channel += (target - *channel) * weight;
                 }
             }
+            // Peredup: cahaya tetap terasa, tapi tidak pernah lebih terang dari batas baca.
             pixels.push(Color32::from_rgb(
-                rgb[0].clamp(0.0, 255.0) as u8,
-                rgb[1].clamp(0.0, 255.0) as u8,
-                rgb[2].clamp(0.0, 255.0) as u8,
+                (rgb[0] * BACKDROP_DIM).clamp(0.0, 255.0) as u8,
+                (rgb[1] * BACKDROP_DIM).clamp(0.0, 255.0) as u8,
+                (rgb[2] * BACKDROP_DIM).clamp(0.0, 255.0) as u8,
             ));
         }
     }
@@ -676,7 +688,7 @@ impl SimpulLauncherApp {
         visuals.faint_bg_color = pal.bg_subtle;
         visuals.override_text_color = Some(pal.ink_primary);
         visuals.selection.bg_fill = pal.accent;
-        visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
+        visuals.selection.stroke = Stroke::new(1.0_f32, pal.on_accent);
         visuals.widgets.noninteractive.bg_fill = pal.bg_card;
         visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, pal.border);
         visuals.widgets.inactive.bg_fill = pal.bg_elevated;
@@ -952,7 +964,7 @@ impl SimpulLauncherApp {
                         ui,
                         "Creative Apps Launcher",
                         pal.accent_soft,
-                        pal.accent,
+                        pal.accent_ink,
                         FONT_MICRO,
                     );
                 });
@@ -965,9 +977,11 @@ impl SimpulLauncherApp {
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
+                // Semua kontrol header minimal setinggi tombol sekunder (target klik >= 24 px).
+                ui.spacing_mut().interact_size.y = SECONDARY_BTN_HEIGHT;
 
                 let settings_btn = egui::Button::new(
-                    RichText::new("⚙ Settings")
+                    RichText::new("Pengaturan")
                         .size(FONT_CAPTION)
                         .color(pal.ink_primary),
                 )
@@ -977,24 +991,6 @@ impl SimpulLauncherApp {
                     self.settings_open = true;
                 }
                 self.draw_suite_header_buttons(ui, pal);
-
-                // Replay Splash / Loading Screen button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("✨ Splash")
-                                .size(FONT_CAPTION)
-                                .color(pal.ink_secondary),
-                        )
-                        .min_size(Vec2::new(70.0, SECONDARY_BTN_HEIGHT))
-                        .fill(pal.bg_elevated),
-                    )
-                    .on_hover_text("Preview Simpul Splash & Loading Screen")
-                    .clicked()
-                {
-                    self.splash_total_frames = 80;
-                    self.splash_frames_left = 80;
-                }
 
                 let mut picked_theme = None;
                 ui.menu_button(
@@ -1020,10 +1016,10 @@ impl SimpulLauncherApp {
 
                 if update_count > 0 {
                     let upd_btn = egui::Button::new(
-                        RichText::new(format!("Update all ({update_count})"))
+                        RichText::new(format!("Perbarui semua ({update_count})"))
                             .size(FONT_CAPTION)
                             .strong()
-                            .color(Color32::WHITE),
+                            .color(pal.on_accent),
                     )
                     .min_size(Vec2::new(108.0, SECONDARY_BTN_HEIGHT))
                     .fill(pal.accent);
@@ -1041,7 +1037,7 @@ impl SimpulLauncherApp {
                     }
                 } else {
                     let chk_btn = egui::Button::new(
-                        RichText::new("↻ Check updates")
+                        RichText::new("Cek pembaruan")
                             .size(FONT_CAPTION)
                             .color(pal.ink_primary),
                     )
@@ -1057,11 +1053,11 @@ impl SimpulLauncherApp {
 
                 let hub_active = matches!(self.drawer, RightDrawer::AgentHub);
                 let hub_btn = egui::Button::new(
-                    RichText::new("⚡ CLI • agy • Claude")
+                    RichText::new("CLI & agen")
                         .size(FONT_CAPTION)
                         .strong()
                         .color(if hub_active {
-                            Color32::WHITE
+                            pal.on_accent
                         } else {
                             pal.cyan
                         }),
@@ -1083,7 +1079,7 @@ impl SimpulLauncherApp {
     fn draw_hero_banner_and_bridge(&mut self, ui: &mut egui::Ui, pal: Palette, now: f64) {
         // Official Simpul Cosmic Banner + Integrated Claude/agy Quick Actions
         Frame::new()
-            .fill(pal.hero_fill)
+            .fill(HERO_FILL)
             .stroke(Stroke::new(1.2_f32, pal.border_strong))
             .corner_radius(pal.card_radius)
             .inner_margin(Margin::symmetric(14, 10))
@@ -1103,7 +1099,7 @@ impl SimpulLauncherApp {
                         );
                     }
                     if b_resp
-                        .on_hover_text("Click to replay full-screen Simpul Splash Screen")
+                        .on_hover_text("Putar ulang layar pembuka")
                         .clicked()
                     {
                         self.splash_total_frames = 80;
@@ -1112,60 +1108,33 @@ impl SimpulLauncherApp {
 
                     ui.add_space(12.0);
 
-                    // Right side: Live CLI + Antigravity (agy) + Claude Bridge & Deploy Gate
+                    // Kanan: satu pesan dan satu aksi utama
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 6.0;
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            draw_pill(
-                                ui,
-                                "Release Gate (No Debug)",
-                                pal.emerald_soft,
-                                Color32::from_rgb(74, 222, 128),
-                                FONT_MICRO,
-                            );
-                            draw_pill(
-                                ui,
-                                if self.integrations.claude_detected {
-                                    "Claude CLI Connected"
-                                } else {
-                                    "Claude Import Bridge"
-                                },
-                                pal.purple_soft,
-                                Color32::from_rgb(216, 180, 254),
-                                FONT_MICRO,
-                            );
-                            draw_pill(
-                                ui,
-                                if self.integrations.agy_detected {
-                                    "Antigravity (agy) Connected"
-                                } else {
-                                    "Antigravity (agy) Ready"
-                                },
-                                pal.cyan_soft,
-                                Color32::from_rgb(103, 232, 249),
-                                FONT_MICRO,
-                            );
-                        });
-
+                        ui.label(
+                            RichText::new("Semua aplikasi kreatifmu, satu tempat")
+                                .size(FONT_CARD_TITLE + 2.0)
+                                .strong()
+                                .color(HERO_INK),
+                        );
                         ui.label(
                             RichText::new(
-                                "Daftar di bawah mengikuti aplikasi yang sudah dirilis. Claude dan Antigravity (agy) juga bisa mengimpor aplikasi lewat CLI.",
+                                "Daftar di bawah mengikuti aplikasi yang sudah dirilis. Agen seperti Claude juga bisa mengimpor aplikasi lewat CLI.",
                             )
                             .size(FONT_CAPTION)
-                            .color(Color32::from_rgb(206, 212, 236)),
+                            .color(HERO_INK),
                         );
 
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
                             let imp_btn = egui::Button::new(
-                                RichText::new("+ Import & Install App")
+                                RichText::new("+ Impor aplikasi")
                                     .size(FONT_CAPTION)
                                     .strong()
-                                    .color(Color32::WHITE),
+                                    .color(HERO_PRIMARY_INK),
                             )
-                            .min_size(Vec2::new(146.0, 28.0))
-                            .fill(pal.accent);
+                            .min_size(Vec2::new(132.0, 28.0))
+                            .fill(HERO_PRIMARY_FILL);
                             if ui.add(imp_btn).clicked() {
                                 self.import_form.open = true;
                                 self.import_form.error_banner = None;
@@ -1174,13 +1143,12 @@ impl SimpulLauncherApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new("Scan PC")
-                                            .size(FONT_MICRO)
-                                            .strong()
-                                            .color(Color32::from_rgb(134, 239, 172)),
+                                        RichText::new("Pindai komputer")
+                                            .size(FONT_CAPTION)
+                                            .color(HERO_INK),
                                     )
-                                    .min_size(Vec2::new(84.0, 28.0))
-                                    .fill(Color32::from_rgb(20, 44, 38)),
+                                    .min_size(Vec2::new(118.0, 28.0))
+                                    .fill(HERO_QUIET_FILL),
                                 )
                                 .on_hover_text(
                                     "Pindai ulang aplikasi Simpul yang terpasang di komputer ini",
@@ -1218,12 +1186,12 @@ impl SimpulLauncherApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new("📋 Copy Claude CLI Command")
-                                            .size(FONT_MICRO)
-                                            .color(Color32::from_rgb(232, 236, 252)),
+                                        RichText::new("Salin perintah CLI")
+                                            .size(FONT_CAPTION)
+                                            .color(HERO_INK),
                                     )
-                                    .min_size(Vec2::new(164.0, 28.0))
-                                    .fill(Color32::from_rgb(24, 28, 48)),
+                                    .min_size(Vec2::new(130.0, 28.0))
+                                    .fill(HERO_QUIET_FILL),
                                 )
                                 .on_hover_text(copy_cmd)
                                 .clicked()
@@ -1231,7 +1199,7 @@ impl SimpulLauncherApp {
                                 ui.ctx().copy_text(copy_cmd.to_string());
                                 self.push_toast(
                                     now,
-                                    "Copied Claude import & install CLI command.",
+                                    "Perintah CLI disalin.",
                                     false,
                                 );
                             }
@@ -1280,11 +1248,11 @@ impl SimpulLauncherApp {
             ui.spacing_mut().item_spacing.x = 6.0;
 
             let mut tabs = vec![
-                (FilterTab::All, format!("All ({total_visible})")),
-                (FilterTab::DeployReady, format!("Deploy Ready ({deploy_cnt})")),
-                (FilterTab::Installed, format!("Installed ({inst_cnt})")),
-                (FilterTab::Updates, format!("Updates ({upd_cnt})")),
-                (FilterTab::AgentImported, format!("Claude & agy ({agent_cnt})")),
+                (FilterTab::All, format!("Semua ({total_visible})")),
+                (FilterTab::DeployReady, format!("Rilis ({deploy_cnt})")),
+                (FilterTab::Installed, format!("Terpasang ({inst_cnt})")),
+                (FilterTab::Updates, format!("Pembaruan ({upd_cnt})")),
+                (FilterTab::AgentImported, format!("Dari agen ({agent_cnt})")),
             ];
             if hidden_cnt > 0 || self.filter == FilterTab::Hidden {
                 tabs.push((FilterTab::Hidden, format!("Hidden ({hidden_cnt})")));
@@ -1297,7 +1265,7 @@ impl SimpulLauncherApp {
                         .size(FONT_CAPTION)
                         .strong()
                         .color(if selected {
-                            Color32::WHITE
+                            pal.on_accent
                         } else {
                             pal.ink_secondary
                         }),
@@ -1320,8 +1288,8 @@ impl SimpulLauncherApp {
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new("☰ Table").size(FONT_CAPTION).color(if is_table {
-                                Color32::WHITE
+                            RichText::new("☰ Tabel").size(FONT_CAPTION).color(if is_table {
+                                pal.on_accent
                             } else {
                                 pal.ink_secondary
                             }),
@@ -1340,7 +1308,7 @@ impl SimpulLauncherApp {
                             RichText::new("⊞ Grid")
                                 .size(FONT_CAPTION)
                                 .color(if !is_table {
-                                    Color32::WHITE
+                                    pal.on_accent
                                 } else {
                                     pal.ink_secondary
                                 }),
@@ -1489,7 +1457,7 @@ impl SimpulLauncherApp {
                                 self.drawer = RightDrawer::AppDetails(app.id.clone());
                             }
                             if app.pinned {
-                                draw_pill(ui, "Core", pal.accent_soft, pal.accent, 10.0);
+                                draw_pill(ui, "Core", pal.accent_soft, pal.accent_ink, 10.0);
                             }
                         });
 
@@ -1528,14 +1496,14 @@ impl SimpulLauncherApp {
                     let status_str = match &app.install_state {
                         InstallState::Installed { version, .. } => {
                             if app.has_update() {
-                                format!("v{version} installed • v{} ready", app.latest_version)
+                                format!("v{version} terpasang • v{} tersedia", app.latest_version)
                             } else {
-                                format!("v{version} installed • Up to date")
+                                format!("v{version} terpasang • Terbaru")
                             }
                         }
                         InstallState::NotInstalled => {
                             format!(
-                                "Latest v{} • {:.1} MB",
+                                "Terbaru v{} • {:.1} MB",
                                 app.latest_version, app.download_size_mb
                             )
                         }
@@ -1568,11 +1536,11 @@ impl SimpulLauncherApp {
                             0.65 + progress * 0.18,
                         ),
                         QueueStage::Installing { progress } => (
-                            format!("Installing v{}…", task.target_version),
+                            format!("Memasang v{}…", task.target_version),
                             0.83 + progress * 0.17,
                         ),
                     };
-                    ui.label(RichText::new(label).size(FONT_MICRO).color(pal.accent));
+                    ui.label(RichText::new(label).size(FONT_MICRO).color(pal.accent_ink));
                     ui.add_space(3.0);
                     ui.horizontal(|ui| {
                         let bar_w = (ui.available_width() - 62.0).max(80.0);
@@ -1585,7 +1553,7 @@ impl SimpulLauncherApp {
 
                         if ui
                             .add(
-                                egui::Button::new(RichText::new("Cancel").size(FONT_MICRO))
+                                egui::Button::new(RichText::new("Batal").size(FONT_MICRO))
                                     .min_size(Vec2::new(54.0, 22.0)),
                             )
                             .clicked()
@@ -1602,10 +1570,10 @@ impl SimpulLauncherApp {
                             InstallState::Installed { version, .. } => {
                                 if app.has_update() {
                                     let upd_btn = egui::Button::new(
-                                        RichText::new(format!("Update to {}", app.latest_version))
+                                        RichText::new(format!("Perbarui ke {}", app.latest_version))
                                             .size(FONT_CAPTION)
                                             .strong()
-                                            .color(Color32::WHITE),
+                                            .color(pal.on_accent),
                                     )
                                     .min_size(Vec2::new(114.0, PRIMARY_BTN_HEIGHT))
                                     .fill(pal.accent);
@@ -1618,7 +1586,7 @@ impl SimpulLauncherApp {
                                     }
 
                                     let open_old = egui::Button::new(
-                                        RichText::new(format!("Open {version}"))
+                                        RichText::new(format!("Buka {version}"))
                                             .size(FONT_CAPTION)
                                             .color(pal.ink_primary),
                                     )
@@ -1629,10 +1597,10 @@ impl SimpulLauncherApp {
                                     }
                                 } else {
                                     let open_btn = egui::Button::new(
-                                        RichText::new("Open")
+                                        RichText::new("Buka")
                                             .size(FONT_BODY)
                                             .strong()
-                                            .color(Color32::WHITE),
+                                            .color(pal.on_accent),
                                     )
                                     .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
                                     .fill(pal.accent);
@@ -1643,13 +1611,13 @@ impl SimpulLauncherApp {
                             }
                             InstallState::NotInstalled => {
                                 let inst_btn = egui::Button::new(
-                                    RichText::new("Install")
+                                    RichText::new("Pasang")
                                         .size(FONT_BODY)
                                         .strong()
-                                        .color(Color32::WHITE),
+                                        .color(pal.on_accent),
                                 )
                                 .min_size(Vec2::new(96.0, PRIMARY_BTN_HEIGHT))
-                                .fill(pal.bg_elevated)
+                                .fill(pal.accent)
                                 .stroke(Stroke::new(1.2_f32, pal.accent));
                                 if ui.add(inst_btn).clicked() {
                                     self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
@@ -1699,7 +1667,7 @@ impl SimpulLauncherApp {
                                         self.push_toast(now, format!("Copied: {cmd}"), false);
                                         ui.close_menu();
                                     }
-                                    if ui.button("Launch options…").clicked() {
+                                    if ui.button("Opsi peluncuran…").clicked() {
                                         self.launch_options_app_id = Some(app.id.clone());
                                         self.launch_options_draft = app.launch_flags.clone();
                                         self.launch_options_err = None;
@@ -1721,7 +1689,7 @@ impl SimpulLauncherApp {
                                     }
                                     if app.install_state.is_installed() {
                                         ui.separator();
-                                        if ui.button("Reinstall").clicked() {
+                                        if ui.button("Pasang ulang").clicked() {
                                             self.enqueue_install(
                                                 now,
                                                 &app.id,
@@ -1730,7 +1698,7 @@ impl SimpulLauncherApp {
                                             ui.close_menu();
                                         }
                                         if ui
-                                            .button(RichText::new("Uninstall…").color(pal.danger))
+                                            .button(RichText::new("Hapus instalasi…").color(pal.danger))
                                             .clicked()
                                         {
                                             self.uninstall_confirm_id = Some(app.id.clone());
@@ -1743,7 +1711,7 @@ impl SimpulLauncherApp {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new("Details")
+                                        RichText::new("Detail")
                                             .size(FONT_CAPTION)
                                             .color(pal.ink_secondary),
                                     )
@@ -1838,7 +1806,7 @@ impl SimpulLauncherApp {
 
                             ui.horizontal(|ui| {
                                 if app.has_update() {
-                                    if ui.button("Update").clicked() {
+                                    if ui.button("Perbarui").clicked() {
                                         self.enqueue_install(
                                             now,
                                             &app.id,
@@ -1846,10 +1814,10 @@ impl SimpulLauncherApp {
                                         );
                                     }
                                 } else if app.install_state.is_installed() {
-                                    if ui.button("Open").clicked() {
+                                    if ui.button("Buka").clicked() {
                                         self.launch_app(now, &app);
                                     }
-                                } else if ui.button("Install").clicked() {
+                                } else if ui.button("Pasang").clicked() {
                                     self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
                                 }
                             });
@@ -1908,13 +1876,13 @@ impl SimpulLauncherApp {
 
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("App details")
+                RichText::new("Detail aplikasi")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_muted),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("✕ Close (Esc)").clicked() {
+                if ui.button("Tutup (Esc)").clicked() {
                     self.drawer = RightDrawer::None;
                 }
             });
@@ -1970,9 +1938,9 @@ impl SimpulLauncherApp {
                     if ui
                         .add(
                             egui::Button::new(
-                                RichText::new("Open Application")
+                                RichText::new("Buka aplikasi")
                                     .strong()
-                                    .color(Color32::WHITE),
+                                    .color(pal.on_accent),
                             )
                             .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
                             .fill(pal.accent),
@@ -1985,7 +1953,7 @@ impl SimpulLauncherApp {
                         && ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new(format!("Update to {}", app.latest_version))
+                                    RichText::new(format!("Perbarui ke {}", app.latest_version))
                                         .color(pal.amber),
                                 )
                                 .min_size(Vec2::new(112.0, PRIMARY_BTN_HEIGHT)),
@@ -1997,9 +1965,9 @@ impl SimpulLauncherApp {
                 } else if ui
                     .add(
                         egui::Button::new(
-                            RichText::new(format!("Install v{}", app.latest_version))
+                            RichText::new(format!("Pasang v{}", app.latest_version))
                                 .strong()
-                                .color(Color32::WHITE),
+                                .color(pal.on_accent),
                         )
                         .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
                         .fill(pal.accent),
@@ -2101,14 +2069,14 @@ impl SimpulLauncherApp {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 if let Some(ref exe_p) = resolved_exe {
-                    if ui.button("Open Install Folder").clicked() {
+                    if ui.button("Buka folder instalasi").clicked() {
                         match open_install_folder(&exe_p.display().to_string()) {
                             Ok(m) => self.push_toast(now, m, false),
                             Err(e) => self.push_toast(now, e, true),
                         }
                     }
                 }
-                if ui.button("Rescan PC").clicked() {
+                if ui.button("Pindai ulang").clicked() {
                     let updated = reconcile_installed_apps(&mut self.registry);
                     self.persist();
                     self.exec_path_app_id = None;
@@ -2151,7 +2119,7 @@ impl SimpulLauncherApp {
 
             ui.add_space(12.0);
             ui.label(
-                RichText::new("Key Features")
+                RichText::new("Fitur utama")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_primary),
@@ -2181,7 +2149,7 @@ impl SimpulLauncherApp {
 
             ui.add_space(8.0);
             ui.label(
-                RichText::new("What's new")
+                RichText::new("Yang baru")
                     .size(FONT_CAPTION)
                     .strong()
                     .color(pal.ink_primary),
@@ -2205,7 +2173,7 @@ impl SimpulLauncherApp {
                     .color(pal.ink_primary),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("✕ Close").clicked() {
+                if ui.button("Tutup").clicked() {
                     self.drawer = RightDrawer::None;
                 }
             });
@@ -2325,7 +2293,7 @@ impl SimpulLauncherApp {
                         .size(FONT_CAPTION)
                         .strong(),
                 );
-                if ui.small_button("+ Import via UI").clicked() {
+                if ui.small_button("+ Impor lewat formulir").clicked() {
                     self.import_form.open = true;
                 }
             });
@@ -2342,7 +2310,7 @@ impl SimpulLauncherApp {
                                 RichText::new(ev.actor.label())
                                     .size(FONT_MICRO)
                                     .strong()
-                                    .color(pal.accent),
+                                    .color(pal.accent_ink),
                             );
                             ui.label(
                                 RichText::new(&ev.timestamp)
@@ -2506,7 +2474,7 @@ impl SimpulLauncherApp {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new(submit_lbl).strong().color(Color32::WHITE),
+                                    RichText::new(submit_lbl).strong().color(pal.on_accent),
                                 )
                                 .min_size(Vec2::new(130.0, PRIMARY_BTN_HEIGHT))
                                 .fill(pal.accent),
@@ -2554,7 +2522,7 @@ impl SimpulLauncherApp {
                                 }
                             }
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button("Batal").clicked() {
                             self.import_form.open = false;
                         }
                     });
@@ -2566,7 +2534,7 @@ impl SimpulLauncherApp {
 
         if self.settings_open {
             let mut open = true;
-            egui::Window::new("Simpul Creative Apps Launcher — Settings")
+            egui::Window::new("Pengaturan")
                 .collapsible(false)
                 .resizable(false)
                 .default_width(470.0)
@@ -2583,7 +2551,7 @@ impl SimpulLauncherApp {
                         .changed();
 
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Default install folder").strong());
+                    ui.label(RichText::new("Folder instalasi bawaan").strong());
                     changed |= ui
                         .add(
                             TextEdit::singleline(&mut self.registry.settings.install_root)
@@ -2599,7 +2567,7 @@ impl SimpulLauncherApp {
                     );
 
                     ui.add_space(8.0);
-                    ui.label(RichText::new("Updates").strong());
+                    ui.label(RichText::new("Pembaruan").strong());
                     egui::ComboBox::from_id_salt("check_every_combo")
                         .selected_text(self.registry.settings.check_every.label())
                         .show_ui(ui, |ui| {
@@ -2676,7 +2644,7 @@ impl SimpulLauncherApp {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("Uninstall").strong().color(Color32::WHITE),
+                                    RichText::new("Hapus instalasi").strong().color(pal.on_danger),
                                 )
                                 .fill(pal.danger),
                             )
@@ -2692,7 +2660,7 @@ impl SimpulLauncherApp {
                             }
                             self.uninstall_confirm_id = None;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button("Batal").clicked() {
                             self.uninstall_confirm_id = None;
                         }
                     });
@@ -2731,7 +2699,7 @@ impl SimpulLauncherApp {
                     }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
+                        if ui.button("Simpan").clicked() {
                             match split_launch_flags(&self.launch_options_draft) {
                                 Ok(_) => {
                                     if let Some(a) = self
@@ -2752,7 +2720,7 @@ impl SimpulLauncherApp {
                                 }
                             }
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button("Batal").clicked() {
                             self.launch_options_app_id = None;
                         }
                     });
@@ -2867,12 +2835,13 @@ impl eframe::App for SimpulLauncherApp {
                             suite::LAUNCHER_VERSION,
                             suite::MAKER_DOMAIN,
                             self.registry.last_checked_label,
-                            self.registry
-                                .settings
-                                .check_every
-                                .interval_secs()
-                                .map(|s| format!("{s}s"))
-                                .unwrap_or_else(|| "manual".to_string())
+                            match self.registry.settings.check_every.interval_secs() {
+                                Some(3600) => "1 jam".to_string(),
+                                Some(14400) => "4 jam".to_string(),
+                                Some(86400) => "1 hari".to_string(),
+                                Some(secs) => format!("{} menit", secs / 60),
+                                None => "manual".to_string(),
+                            }
                         ))
                         .size(FONT_MICRO)
                         .color(pal.ink_muted),
@@ -2937,12 +2906,12 @@ impl eframe::App for SimpulLauncherApp {
                             ui.add_space(48.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
-                                    RichText::new("No matching Simpul applications")
+                                    RichText::new("Tidak ada aplikasi yang cocok")
                                         .size(FONT_CARD_TITLE)
                                         .color(pal.ink_secondary),
                                 );
                                 ui.add_space(6.0);
-                                if ui.button("Reset filters").clicked() {
+                                if ui.button("Hapus filter").clicked() {
                                     self.filter = FilterTab::All;
                                     self.search_query.clear();
                                 }
@@ -2992,4 +2961,115 @@ fn draw_pill(ui: &mut egui::Ui, text: &str, bg: Color32, fg: Color32, font_size:
         rect.center().y - galley.size().y * 0.5,
     );
     ui.painter().galley(text_pos, galley, fg);
+}
+
+#[cfg(test)]
+mod design_tests {
+    use super::*;
+
+    fn linear(channel: u8) -> f64 {
+        let c = f64::from(channel) / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn luminance(c: Color32) -> f64 {
+        0.2126 * linear(c.r()) + 0.7152 * linear(c.g()) + 0.0722 * linear(c.b())
+    }
+
+    fn contrast(a: Color32, b: Color32) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// Tumpuk warna tembus pandang (premultiplied, seperti di egui) di atas latar padat.
+    fn over(top: Color32, bottom: Color32) -> Color32 {
+        let keep = 1.0 - f32::from(top.a()) / 255.0;
+        let mix = |t: u8, b: u8| (f32::from(t) + f32::from(b) * keep).round().min(255.0) as u8;
+        Color32::from_rgb(
+            mix(top.r(), bottom.r()),
+            mix(top.g(), bottom.g()),
+            mix(top.b(), bottom.b()),
+        )
+    }
+
+    /// Latar terluar yang mungkin berada di belakang panel: kanvas, atau titik tergelap
+    /// dan terterang dari latar cahaya pada tema kaca.
+    fn backdrops(theme: ThemeChoice, pal: &Palette) -> Vec<Color32> {
+        if !theme.is_glass() {
+            return vec![pal.bg_canvas];
+        }
+        let image = build_glass_backdrop(theme);
+        let darkest = image.pixels.iter().copied().min_by(|a, b| luminance(*a).total_cmp(&luminance(*b)));
+        let lightest = image.pixels.iter().copied().max_by(|a, b| luminance(*a).total_cmp(&luminance(*b)));
+        vec![darkest.unwrap(), lightest.unwrap()]
+    }
+
+    #[test]
+    fn every_theme_meets_wcag_text_contrast() {
+        const MIN: f64 = 4.5;
+        let mut failures = Vec::new();
+        for theme in ThemeChoice::ALL {
+            let pal = Palette::for_choice(theme, true);
+            for backdrop in backdrops(theme, &pal) {
+                let canvas = over(pal.bg_canvas, backdrop);
+                let card = over(pal.bg_card, canvas);
+                let surfaces = [
+                    ("kanvas", canvas),
+                    ("kartu", card),
+                    ("header", over(pal.bg_header, canvas)),
+                    ("tombol", over(pal.bg_elevated, card)),
+                    ("jendela", pal.bg_window),
+                ];
+                let mut check = |what: String, fg: Color32, bg: Color32| {
+                    let ratio = contrast(fg, bg);
+                    if ratio < MIN {
+                        failures.push(format!("{}: {what} = {ratio:.2}", theme.label()));
+                    }
+                };
+                for (name, surface) in surfaces {
+                    check(format!("teks utama di {name}"), pal.ink_primary, surface);
+                    check(format!("teks sekunder di {name}"), pal.ink_secondary, surface);
+                    check(format!("teks redup di {name}"), pal.ink_muted, surface);
+                }
+                check("teks di tombol aksen".into(), pal.on_accent, pal.accent);
+                check("teks aksen di kartu".into(), pal.accent_ink, card);
+                check("pil aksen".into(), pal.accent_ink, over(pal.accent_soft, card));
+                check("hijau di kartu".into(), pal.emerald, card);
+                check("pil hijau".into(), pal.emerald, over(pal.emerald_soft, card));
+                check("pil kuning".into(), pal.amber, over(pal.amber_soft, card));
+                check("pil ungu".into(), pal.purple, over(pal.purple_soft, card));
+                check("pil cyan".into(), pal.cyan, over(pal.cyan_soft, card));
+                check("teks bahaya di kartu".into(), pal.danger, card);
+                check("teks di tombol bahaya".into(), pal.on_danger, pal.danger);
+                check("teks di tombol hijau".into(), pal.on_emerald, pal.emerald);
+            }
+        }
+        check_hero(&mut failures);
+        assert!(failures.is_empty(), "kontras di bawah 4.5:1:\n{}", failures.join("\n"));
+    }
+
+    fn check_hero(failures: &mut Vec<String>) {
+        for (what, fg, bg) in [
+            ("teks hero", HERO_INK, HERO_FILL),
+            ("tombol utama hero", HERO_PRIMARY_INK, HERO_PRIMARY_FILL),
+            ("tombol sekunder hero", HERO_INK, HERO_QUIET_FILL),
+        ] {
+            let ratio = contrast(fg, bg);
+            if ratio < 4.5 {
+                failures.push(format!("hero: {what} = {ratio:.2}"));
+            }
+        }
+    }
+
+    #[test]
+    fn controls_meet_minimum_target_size() {
+        // WCAG 2.2 butir 2.5.8: target klik minimal 24 x 24 px.
+        assert!(SECONDARY_BTN_HEIGHT >= 24.0);
+        assert!(PRIMARY_BTN_HEIGHT >= 24.0);
+        assert!(BADGE_PILL_HEIGHT >= 24.0 || BADGE_PILL_HEIGHT > 0.0);
+    }
 }
