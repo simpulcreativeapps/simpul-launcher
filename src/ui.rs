@@ -471,6 +471,12 @@ pub struct SimpulLauncherApp {
     bug_include_log: bool,
     /// Hasil kiriman laporan yang sedang berjalan di thread latar.
     bug_send: Option<std::sync::Arc<std::sync::Mutex<Option<Result<u64, String>>>>>,
+    /// Unduhan pembaruan wajib sudah dimulai otomatis.
+    update_started: bool,
+    /// Pengguna memilih lanjut sekali ini setelah unduhan gagal.
+    update_skipped: bool,
+    /// Hanya untuk mode potret: tampilkan layar pembaruan wajib.
+    update_preview: bool,
 }
 
 impl SimpulLauncherApp {
@@ -553,6 +559,9 @@ impl SimpulLauncherApp {
             bug_text: String::new(),
             bug_include_log: false,
             bug_send: None,
+            update_started: false,
+            update_skipped: false,
+            update_preview: shot_view == "update",
         }
     }
 
@@ -2892,6 +2901,12 @@ impl eframe::App for SimpulLauncherApp {
 
         if self.draw_discontinued(ctx, pal, now) {
             self.draw_toasts(ctx, pal, now);
+            return;
+        }
+
+        if self.draw_required_update(ctx, pal, now) {
+            self.draw_toasts(ctx, pal, now);
+            self.handle_screenshot_lifecycle(ctx);
             return;
         }
 

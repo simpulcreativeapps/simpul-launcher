@@ -147,6 +147,22 @@ impl SimpulLauncherApp {
             self.push_toast(now, text, true);
             return;
         }
+        if let Some(need) = self.guard_snap.launcher_needed_for(&app.id) {
+            let text = format!(
+                "{} butuh Simpul Creative Launcher v{need} atau lebih baru. Perbarui launcher dulu.",
+                app.name
+            );
+            self.push_toast(now, text, true);
+            return;
+        }
+        if let Some(version) = self.guard_snap.app_required_update(&app.id) {
+            let text = format!(
+                "{} wajib diperbarui ke v{version} sebelum dibuka. Tekan Perbarui pada kartunya.",
+                app.name
+            );
+            self.push_toast(now, text, true);
+            return;
+        }
         match try_launch_app(app, &[]) {
             Ok(m) => self.push_toast(now, m, false),
             Err(e) => self.push_toast(now, e, true),
@@ -168,6 +184,14 @@ impl SimpulLauncherApp {
         };
         if !self.guard_snap.app_may_run(&app.id) {
             let text = format!("{} sudah dihentikan dan tidak bisa dipasang.", app.name);
+            self.push_toast(now, text, true);
+            return true;
+        }
+        if let Some(need) = self.guard_snap.launcher_needed_for(&app.id) {
+            let text = format!(
+                "{} butuh Simpul Creative Launcher v{need} atau lebih baru. Perbarui launcher dulu.",
+                app.name
+            );
             self.push_toast(now, text, true);
             return true;
         }
@@ -271,6 +295,175 @@ impl SimpulLauncherApp {
                             egui::Button::new("Tutup")
                                 .min_size(Vec2::new(180.0, SECONDARY_BTN_HEIGHT)),
                         )
+                        .clicked()
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+            });
+        true
+    }
+
+    /// Layar penuh saat ada versi launcher yang lebih baru: launcher wajib diperbarui
+    /// sebelum dipakai. Installer hanya dijalankan bila sha256-nya cocok dengan manifest
+    /// bertanda tangan. Mengembalikan `true` kalau layar ini ditampilkan.
+    pub(super) fn draw_required_update(&mut self, ctx: &egui::Context, pal: Palette, now: f64) -> bool {
+        let update = if self.update_preview {
+            Some(simpul_guard::UpdateInfo {
+                version: semver::Version::new(9, 9, 9),
+                url: String::new(),
+                sha256: String::new(),
+                notes_url: None,
+                mandatory: false,
+            })
+        } else {
+            self.guard_snap.launcher.as_ref().and_then(|r| r.update.clone())
+        };
+        let Some(update) = update else {
+            return false;
+        };
+        // Lanjut sekali ini hanya tersedia bila unduhan gagal dan versi terpasang masih
+        // di atas batas minimal manifest.
+        if self.update_skipped && !update.mandatory {
+            return false;
+        }
+        let state = if self.update_preview {
+            None
+        } else {
+            self.guard_snap.downloads.get(LAUNCHER_MANIFEST_ID).cloned()
+        };
+        if state.is_none() && !self.update_started && !self.update_preview {
+            self.update_started = true;
+            let repaint = ctx.clone();
+            self.guard
+                .download(LAUNCHER_MANIFEST_ID, update.clone(), move || repaint.request_repaint());
+        }
+
+        egui::CentralPanel::default()
+            .frame(Frame::new().fill(pal.bg_canvas).inner_margin(Margin::same(24)))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space((ui.available_height() * 0.2).max(24.0));
+                    ui.label(
+                        RichText::new("Pembaruan wajib")
+                            .size(26.0)
+                            .strong()
+                            .color(pal.ink_primary),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{LAUNCHER_NAME} v{} sudah tersedia. Yang terpasang v{LAUNCHER_VERSION}.",
+                            update.version
+                        ))
+                        .size(FONT_BODY)
+                        .color(pal.ink_secondary),
+                    );
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                "Launcher harus diperbarui sebelum dipakai, supaya semua aplikasi \
+                                 Simpul tetap cocok satu sama lain. Aplikasi dan file kerjamu tidak \
+                                 berubah.",
+                            )
+                            .size(FONT_CAPTION)
+                            .color(pal.ink_muted),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(18.0);
+
+                    match state {
+                        None | Some(DownloadState::Downloading) => {
+                            ui.add(egui::Spinner::new().size(22.0));
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("Mengunduh pembaruan…")
+                                    .size(FONT_CAPTION)
+                                    .color(pal.ink_secondary),
+                            );
+                        }
+                        Some(DownloadState::Ready(path)) => {
+                            ui.label(
+                                RichText::new("Unduhan terverifikasi (sha256 cocok dengan manifest).")
+                                    .size(FONT_CAPTION)
+                                    .color(pal.emerald),
+                            );
+                            ui.add_space(10.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Pasang sekarang").strong().color(pal.on_accent),
+                                    )
+                                    .min_size(Vec2::new(200.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.accent),
+                                )
+                                .clicked()
+                            {
+                                match suite::run_installer(&path) {
+                                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                                    Err(e) => self.push_toast(now, e, true),
+                                }
+                            }
+                        }
+                        Some(DownloadState::Failed(err)) => {
+                            ui.label(
+                                RichText::new(format!("Unduhan gagal: {err}"))
+                                    .size(FONT_CAPTION)
+                                    .color(pal.danger),
+                            );
+                            ui.add_space(10.0);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Coba lagi").strong().color(pal.on_accent),
+                                    )
+                                    .min_size(Vec2::new(200.0, PRIMARY_BTN_HEIGHT))
+                                    .fill(pal.accent),
+                                )
+                                .clicked()
+                            {
+                                self.guard.clear_download(LAUNCHER_MANIFEST_ID);
+                                self.update_started = false;
+                            }
+                            if !update.mandatory {
+                                ui.add_space(6.0);
+                                if ui
+                                    .add(
+                                        egui::Button::new("Lanjutkan tanpa memperbarui kali ini")
+                                            .min_size(Vec2::new(200.0, SECONDARY_BTN_HEIGHT)),
+                                    )
+                                    .on_hover_text(
+                                        "Hanya untuk sesi ini. Pembaruan diminta lagi saat launcher dibuka berikutnya.",
+                                    )
+                                    .clicked()
+                                {
+                                    self.update_skipped = true;
+                                    suite::log_event("pembaruan wajib dilewati sekali karena unduhan gagal");
+                                }
+                            } else {
+                                ui.add_space(6.0);
+                                ui.label(
+                                    RichText::new(
+                                        "Versi terpasang sudah di bawah batas minimal, jadi tidak bisa dilanjutkan tanpa memperbarui.",
+                                    )
+                                    .size(FONT_MICRO)
+                                    .color(pal.ink_muted),
+                                );
+                            }
+                        }
+                    }
+
+                    ui.add_space(10.0);
+                    if let Some(url) = update.notes_url.as_deref() {
+                        if ui.link("Lihat catatan rilis").clicked() {
+                            ctx.open_url(egui::OpenUrl::new_tab(url));
+                        }
+                        ui.add_space(6.0);
+                    }
+                    if ui
+                        .add(egui::Button::new("Keluar").min_size(Vec2::new(200.0, SECONDARY_BTN_HEIGHT)))
                         .clicked()
                     {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);

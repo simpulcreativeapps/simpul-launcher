@@ -6,6 +6,18 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+## [1.3.0] - 2026-11-23
+
+### Ditambahkan
+- **Pembaruan wajib untuk launcher.** Bila manifest bertanda tangan memuat versi launcher
+  yang lebih baru, launcher menampilkan layar "Pembaruan wajib", mengunduh installernya,
+  memeriksa sha256, lalu memasangnya dengan satu klik. Bila unduhan gagal, pengguna boleh
+  lanjut sekali untuk sesi itu, kecuali versinya sudah di bawah `min_version` manifest.
+- **Versi launcher minimal per aplikasi** (`min_launcher` di manifest): aplikasi tidak
+  bisa dibuka atau dipasang dari launcher yang lebih lama.
+- **Versi minimal per aplikasi** (`min_version` di manifest): aplikasi di bawah versi itu
+  wajib diperbarui sebelum dibuka.
+
 ## [1.2.0] - 2026-11-23
 
 ### Keamanan

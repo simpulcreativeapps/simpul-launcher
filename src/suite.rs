@@ -56,6 +56,16 @@ pub struct CatalogEntry {
     pub name: String,
     pub tagline: Option<String>,
     pub version: Option<String>,
+    /// Versi launcher terendah yang disyaratkan aplikasi ini.
+    pub min_launcher: Option<String>,
+}
+
+/// Bila `current` lebih rendah dari `min`, kembalikan `min` (versi yang dibutuhkan).
+/// Versi yang tidak terbaca tidak pernah memblokir.
+pub fn version_below(min: &str, current: &str) -> Option<String> {
+    let need = semver::Version::parse(min).ok()?;
+    let have = semver::Version::parse(current).ok()?;
+    (have < need).then(|| need.to_string())
 }
 
 /// Folder cache bersama untuk launcher dan semua aplikasi Simpul, supaya manifest sah
@@ -127,6 +137,19 @@ impl GuardSnapshot {
 
     pub fn app_update(&self, app_id: &str) -> Option<&UpdateInfo> {
         self.apps.get(app_id).and_then(|r| r.update.as_ref())
+    }
+
+    /// Versi launcher yang dibutuhkan aplikasi ini, bila launcher yang berjalan lebih rendah.
+    pub fn launcher_needed_for(&self, app_id: &str) -> Option<String> {
+        let entry = self.catalog.as_ref()?.iter().find(|e| e.app_id == app_id)?;
+        version_below(entry.min_launcher.as_deref()?, LAUNCHER_VERSION)
+    }
+
+    /// Versi yang wajib dipasang sebelum aplikasi ini boleh dibuka (di bawah `min_version`).
+    pub fn app_required_update(&self, app_id: &str) -> Option<String> {
+        self.app_update(app_id)
+            .filter(|u| u.mandatory)
+            .map(|u| u.version.to_string())
     }
 
     /// Aplikasi boleh dibuka? Aplikasi yang tidak ada di manifest selalu boleh.
@@ -264,6 +287,7 @@ fn evaluate_catalog(
             name: entry.name.clone(),
             tagline: entry.tagline.clone(),
             version: entry.release.as_ref().map(|r| r.version.clone()),
+            min_launcher: entry.min_launcher.clone(),
         });
     }
     (reports, catalog)
@@ -762,6 +786,16 @@ mod tests {
         assert_eq!(launcher_id_for("sync"), "simpulsync-4");
         assert_eq!(manifest_id_for("video"), "video");
         assert_eq!(launcher_id_for(manifest_id_for("design")), "design");
+    }
+
+    #[test]
+    fn minimum_version_blocks_only_older_builds() {
+        assert_eq!(version_below("1.3.0", "1.2.9").as_deref(), Some("1.3.0"));
+        assert_eq!(version_below("1.3.0", "1.3.0"), None);
+        assert_eq!(version_below("1.3.0", "2.0.0"), None);
+        // Versi yang tidak terbaca tidak boleh mengunci pengguna.
+        assert_eq!(version_below("abc", "1.0.0"), None);
+        assert_eq!(version_below("1.3.0", "abc"), None);
     }
 
     #[test]
