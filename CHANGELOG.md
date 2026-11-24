@@ -4,6 +4,14 @@ Semua perubahan pada Simpul Creative Launcher dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.6.3] - 2026-11-24
+
+### Diperbaiki
+- Tombol Buka kini membuka versi aplikasi yang terbaru walau versi lama masih ada di folder lain
+  (mis. Simpul Sync lama di "SimpulSync 4" setelah memasang 4.2.x di "Simpul Sync").
+- Aplikasi yang dulu terdeteksi lalu dihapus dari komputer tidak lagi tersisa sebagai entri "hantu"
+  yang tidak bisa dibuka maupun dipasang.
+
 ## [1.6.2] - 2026-11-24
 
 ### Diperbaiki

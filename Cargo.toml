@@ -1,6 +1,6 @@
 [package]
 name = "simpul-creative-launcher"
-version = "1.6.2"
+version = "1.6.3"
 edition = "2021"
 description = "Simpul Creative Launcher: pasang, perbarui, dan buka aplikasi Simpul Creative Apps"
 homepage = "https://simpulproject.com"

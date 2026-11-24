@@ -1090,6 +1090,7 @@ pub fn apply_discovered_apps(
     hashes: &std::collections::BTreeMap<String, String>,
 ) -> Vec<String> {
     let mut updated_names = Vec::new();
+    let discovered_ids: Vec<String> = discovered.iter().map(|f| f.id.clone()).collect();
 
     for found in discovered {
         let exe_str = found.exe_path.display().to_string();
@@ -1132,10 +1133,22 @@ pub fn apply_discovered_apps(
                 // Aplikasi diperbarui di luar launcher (atau lewat installer yang dijalankan launcher):
                 // exe-nya masih di tempat yang sama, tapi versinya berubah. Ikuti versi hasil pindaian,
                 // kalau tidak launcher terus menawarkan "Perbarui" untuk versi yang sudah terpasang.
-                if let InstallState::Installed { version, .. } = &mut app.install_state {
+                // Versi baru bisa terpasang di FOLDER LAIN (mis. Sync lama di "SimpulSync 4\simpulsync4.exe",
+                // Sync 4.2.x di "Simpul Sync\simpulsync-gui.exe"): jalur exe juga harus ikut pindah,
+                // kalau tidak tombol Buka tetap membuka versi lama (laporan simpul-bugs #4).
+                if let InstallState::Installed { version, install_path, .. } = &mut app.install_state {
                     let baru = found.version.trim();
                     if !baru.is_empty() && version.as_str() != baru {
                         *version = baru.to_string();
+                        changed = true;
+                    }
+                    if !install_path.eq_ignore_ascii_case(&exe_str) {
+                        *install_path = exe_str.clone();
+                        app.artifact_path = Some(exe_str.clone());
+                        app.workspace_path = Some(dir_str.clone());
+                        if let Some(sz) = real_size_mb {
+                            app.download_size_mb = sz;
+                        }
                         changed = true;
                     }
                 }
@@ -1217,6 +1230,24 @@ pub fn apply_discovered_apps(
         updated_names.push(format!("{} entri ganda dibersihkan", before - reg.apps.len()));
     }
 
+    // Entri "hantu" (laporan simpul-bugs #4): aplikasi yang dulu TERDETEKSI di komputer ini lalu
+    // dihapus/dipindah. Exe-nya sudah tidak ada dan pindaian sekarang tidak menemukannya, jadi
+    // entri itu tidak bisa dibuka maupun dipasang. Hapus dari daftar. Aplikasi katalog yang sudah
+    // dirilis akan muncul lagi dari manifest (bisa dipasang); impor pengguna/agen tidak disentuh.
+    let found_ids: Vec<String> = discovered_ids;
+    let before = reg.apps.len();
+    reg.apps.retain(|a| {
+        let auto_detected = a.category == "Terpasang di komputer ini" && a.origin == AgentOrigin::SimpulSuite;
+        let dead = match &a.install_state {
+            InstallState::Installed { install_path, .. } => !is_launchable_file(Path::new(install_path)),
+            InstallState::NotInstalled => true,
+        };
+        !(auto_detected && dead && !found_ids.iter().any(|i| i.eq_ignore_ascii_case(&a.id)))
+    });
+    if reg.apps.len() != before {
+        updated_names.push(format!("{} entri yang sudah tidak terpasang dibersihkan", before - reg.apps.len()));
+    }
+
     // Ensure any seeded placeholder entries whose fake folder does not contain an executable
     // are not misleadingly marked Installed when nothing exists on disk.
     let managed_root = PathBuf::from(&reg.settings.install_root);
@@ -1250,7 +1281,7 @@ pub fn apply_discovered_apps(
 pub fn current_launchable_target(app: &SimpulApp) -> Option<PathBuf> {
     let preferred: &[&str] = match app.id.as_str() {
         "simpulgram" => &["SimpulGram.exe", "simpulgram.exe"],
-        "simpulsync-4" => &["SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
+        "simpulsync-4" => &["simpulsync-gui.exe", "SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
         "capr" => &["OpenNotebook.exe", "CAPr.exe", "Capr.exe"],
         "simpulproject-ai" => &["SimpulprojectAI.exe", "Simpulproject AI.exe"],
         _ => &[],
@@ -1609,5 +1640,63 @@ mod tests {
             InstallState::Installed { version, .. } => assert_eq!(version, "4.2.1"),
             InstallState::NotInstalled => panic!("harus tetap terpasang"),
         }
+    }
+
+    #[test]
+    fn launch_path_moves_to_newer_install_folder() {
+        // Laporan #4: Sync lama (exe lain yang MASIH ada) tetap dibuka setelah update ke 4.2.x.
+        let dir = std::env::temp_dir().join(format!("simpul-uji-{}", std::process::id()));
+        let lama = dir.join("SimpulSync 4").join("simpulsync4.exe");
+        let baru = dir.join("Simpul Sync").join("simpulsync-gui.exe");
+        for f in [&lama, &baru] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, b"MZ").unwrap();
+        }
+        let mut reg = default_registry();
+        let mut app = catalog_app("simpulsync-4", "Simpul Sync", None, "4.2.2");
+        app.install_state = InstallState::Installed {
+            version: "4.1.11".into(),
+            install_path: lama.display().to_string(),
+            installed_at: "y".into(),
+        };
+        reg.apps = vec![app];
+        let found = DiscoveredInstalledApp {
+            id: "simpulsync-4".into(),
+            name: "Simpul Sync".into(),
+            version: "4.2.2".into(),
+            exe_path: baru.clone(),
+            install_dir: baru.parent().unwrap().to_path_buf(),
+            default_launch_flags: String::new(),
+            source_label: "Windows Registry".into(),
+        };
+        apply_discovered_apps(&mut reg, vec![found], &std::collections::BTreeMap::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        match &reg.apps[0].install_state {
+            InstallState::Installed { version, install_path, .. } => {
+                assert_eq!(version, "4.2.2");
+                assert_eq!(install_path, &baru.display().to_string());
+            }
+            InstallState::NotInstalled => panic!("harus tetap terpasang"),
+        }
+    }
+
+    #[test]
+    fn ghost_auto_detected_entry_is_removed() {
+        // Laporan #4: entri hasil deteksi yang exe-nya sudah hilang tidak boleh tersisa di daftar.
+        let mut reg = default_registry();
+        let mut hantu = catalog_app("simpul-alat-lama", "Simpul Alat Lama", None, "1.0.0");
+        hantu.category = "Terpasang di komputer ini".into();
+        hantu.install_state = InstallState::Installed {
+            version: "1.0.0".into(),
+            install_path: r"C:	idakdalat.exe".into(),
+            installed_at: "y".into(),
+        };
+        let mut impor = catalog_app("alat-saya", "Alat Saya", None, "1.0.0");
+        impor.origin = AgentOrigin::Claude;
+        impor.category = "Terpasang di komputer ini".into();
+        reg.apps = vec![hantu, impor];
+        apply_discovered_apps(&mut reg, Vec::new(), &std::collections::BTreeMap::new());
+        let ids: Vec<&str> = reg.apps.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["alat-saya"], "hanya entri hantu hasil deteksi yang dihapus");
     }
 }
