@@ -11,7 +11,7 @@ use crate::models::{
 };
 use crate::registry::{now_label, try_launch_app};
 use crate::suite::{
-    self, DownloadState, CONTACT_EMAIL, DONATE_URL, LAUNCHER_MANIFEST_ID, LAUNCHER_NAME,
+    self, DownloadState, CONTACT_EMAIL, LAUNCHER_MANIFEST_ID, LAUNCHER_NAME,
     LAUNCHER_VERSION, MAKER_DOMAIN, MAKER_NAME, MAKER_URL, SOURCE_URL, SUITE_NAME,
     UPSTREAM_CREDIT, UPSTREAM_URL,
 };
@@ -893,7 +893,7 @@ impl SimpulLauncherApp {
                     .min_size(Vec2::new(150.0, PRIMARY_BTN_HEIGHT))
                     .fill(pal.emerald);
                     if ui.add_enabled(self.donate_agree, go).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(DONATE_URL));
+                        ctx.open_url(egui::OpenUrl::new_tab(suite::DONATE_DIALOG_URL));
                         self.donate_sent = true;
                     }
                     if ui

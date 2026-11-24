@@ -21,6 +21,9 @@ pub const MAKER_DOMAIN: &str = "simpulproject.com";
 pub const MAKER_URL: &str = "https://simpulproject.com";
 pub const SOURCE_URL: &str = "https://github.com/simpulcreativeapps";
 pub const DONATE_URL: &str = "https://saweria.co/simpuldevs";
+/// Tombol "Donasi" umum: dialog donasi situs (kode dari server), supaya donasi tercatat sebagai
+/// pendukung dari launcher. DONATE_URL langsung ke Saweria hanya dipakai di gerbang pasang (kode sudah dibuat).
+pub const DONATE_DIALOG_URL: &str = "https://simpul-creative-apps.pages.dev/?donasi=1&app=launcher&dari=launcher";
 pub const CONTACT_EMAIL: &str = "simpulcreative.apps@gmail.com";
 
 /// Launcher ini turunan dari ArtCraft Launcher (MIT OR Apache-2.0). Lihat `NOTICE`.

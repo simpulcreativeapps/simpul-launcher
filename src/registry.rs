@@ -794,7 +794,13 @@ fn clean_icon_or_path_value(raw: &str) -> Option<PathBuf> {
 }
 
 fn canonicalize_known_simpul_app(display_name: &str) -> Option<(&'static str, &'static str, &'static str, &'static [&'static str])> {
-    let lower = display_name.to_ascii_lowercase();
+    // Bandingkan tanpa spasi/tanda baca: "Simpul Sync version 4.2.0", "SimpulSync 4", "simpul-sync"
+    // harus dikenali sebagai aplikasi yang sama dengan entri katalog.
+    let lower: String = display_name
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
     if lower.contains("simpulgram") {
         Some((
             "simpulgram",
@@ -807,7 +813,7 @@ fn canonicalize_known_simpul_app(display_name: &str) -> Option<(&'static str, &'
             "simpulsync-4",
             "SimpulSync 4",
             "",
-            &["SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
+            &["simpulsync-gui.exe", "SimpulSync 4.exe", "simpulsync4.exe", "SimpulSync.exe"],
         ))
     } else if lower.contains("capr") || lower.contains("opennotebook") {
         Some((
@@ -1182,6 +1188,21 @@ pub fn apply_discovered_apps(
             reg.apps.insert(insert_pos, new_app);
             updated_names.push(format!("{} -> {}", found.name, exe_str));
         }
+    }
+
+    // Entri hasil deteksi lama yang dulu tidak dikenali (mis. "Simpul Sync version 4.2.0" dengan id
+    // `simpul-sync-version-4-2-0`) sekarang dikenali sebagai aplikasi katalog: hapus duplikatnya.
+    let before = reg.apps.len();
+    let ids: Vec<String> = reg.apps.iter().map(|a| a.id.clone()).collect();
+    reg.apps.retain(|a| {
+        let auto_detected = a.category == "Terpasang di komputer ini";
+        match canonicalize_known_simpul_app(&a.name) {
+            Some(k) if auto_detected && k.0 != a.id && ids.iter().any(|i| i == k.0) => false,
+            _ => true,
+        }
+    });
+    if reg.apps.len() != before {
+        updated_names.push(format!("{} entri ganda dibersihkan", before - reg.apps.len()));
     }
 
     // Ensure any seeded placeholder entries whose fake folder does not contain an executable

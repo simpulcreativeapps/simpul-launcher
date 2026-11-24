@@ -2,7 +2,7 @@
 ; Single-file installer, tanpa admin (per-user), pasang ke %LOCALAPPDATA%\Programs\Simpul Creative Launcher.
 
 #ifndef AppVersion
-  #define AppVersion "1.6.0"
+  #define AppVersion "1.6.1"
 #endif
 #ifndef Root
   #define Root ".."
@@ -25,7 +25,7 @@ DefaultGroupName=Simpul Creative Launcher
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutDir}
-OutputBaseFilename=Simpul-Creative-Launcher-Setup
+OutputBaseFilename=Simpul-Creative-Launcher-Setup-{#AppVersion}
 SetupIconFile={#Root}\assets\simpul-launcher.ico
 UninstallDisplayIcon={app}\assets\simpul-launcher.ico
 Compression=lzma2/ultra64

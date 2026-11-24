@@ -4,6 +4,16 @@ Semua perubahan pada Simpul Creative Launcher dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.6.1] - 2026-11-24
+
+### Diperbaiki
+- Simpul Sync yang sudah terpasang tidak lagi muncul dua kali (satu dengan tombol "Pasang lagi").
+- Tombol di mode daftar kini bergaya jelas: tombol utama berwarna, tombol Buka bergaris tepi.
+- Tombol Donasi membuka dialog donasi di situs, dengan catatan dari mana donasi berasal.
+
+### Diubah
+- Ikon Simpul Sync di launcher kini memakai ikon resminya, sama dengan di situs dan di aplikasinya.
+
 ## [1.6.0] - 2026-11-24
 
 ### Ditambahkan
