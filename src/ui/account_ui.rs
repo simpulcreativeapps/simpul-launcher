@@ -16,6 +16,8 @@ pub(super) enum AccountEvent {
     LoggedOut,
     Deleted,
     CertificateIssued,
+    ProfileLoaded(account::Profile),
+    ProfileSaved(account::Profile),
     Failed(String),
 }
 
@@ -138,13 +140,25 @@ impl SimpulLauncherApp {
             AccountEvent::LoggedIn(found) => {
                 self.push_toast(now, format!("Masuk sebagai {}.", found.email), false);
                 self.account = Some(found);
+                self.forget_profile();
             }
             AccountEvent::LoggedOut => {
                 self.account = None;
+                self.forget_profile();
                 self.push_toast(now, "Kamu sudah keluar.", false);
+            }
+            AccountEvent::ProfileLoaded(profile) => {
+                self.profile_draft = profile.clone();
+                self.profile = Some(profile);
+            }
+            AccountEvent::ProfileSaved(profile) => {
+                self.profile_draft = profile.clone();
+                self.profile = Some(profile);
+                self.push_toast(now, "Profil tersimpan.", false);
             }
             AccountEvent::Deleted => {
                 self.account = None;
+                self.forget_profile();
                 self.account_confirm_delete = false;
                 self.push_toast(now, "Akun dan semua datanya sudah dihapus.", false);
             }
@@ -158,10 +172,120 @@ impl SimpulLauncherApp {
         self.refresh_certificates();
     }
 
+    /// Buang profil dari memori (keluar, hapus akun, ganti akun).
+    fn forget_profile(&mut self) {
+        self.profile = None;
+        self.profile_draft = account::Profile::default();
+        self.profile_requested = false;
+    }
+
+    /// Form profil opsional + persetujuan penawaran. Dikembalikan: true bila "Simpan" diklik.
+    fn draw_profile_form(&mut self, ui: &mut egui::Ui, pal: Palette, busy: bool) -> bool {
+        let note = |ui: &mut egui::Ui, text: &str| {
+            ui.add(egui::Label::new(RichText::new(text).size(FONT_MICRO).color(pal.ink_muted)).wrap());
+        };
+        ui.label(RichText::new("Profil & preferensi").size(FONT_BODY).strong().color(pal.ink_primary));
+        note(ui, "Semua isian opsional dan disimpan terenkripsi. Hanya kamu dan tim Simpul yang bisa melihatnya.");
+        ui.add_space(6.0);
+        if self.profile.is_none() {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(RichText::new("Memuat profil…").size(FONT_CAPTION).color(pal.ink_secondary));
+            });
+            return false;
+        }
+        let draft = &mut self.profile_draft;
+        egui::Grid::new("simpul_profile_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+            ui.label(RichText::new("Username").size(FONT_CAPTION).color(pal.ink_secondary));
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.username)
+                    .hint_text("contoh: rani.art")
+                    .char_limit(20)
+                    .desired_width(220.0),
+            );
+            ui.end_row();
+            ui.label(RichText::new("Gender").size(FONT_CAPTION).color(pal.ink_secondary));
+            let current = account::GENDERS
+                .iter()
+                .find(|(v, _)| *v == draft.gender)
+                .map_or("Tidak diisi", |(_, l)| l);
+            egui::ComboBox::from_id_salt("simpul_profile_gender")
+                .selected_text(current)
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for (value, label) in account::GENDERS {
+                        ui.selectable_value(&mut draft.gender, value.to_string(), label);
+                    }
+                });
+            ui.end_row();
+            ui.label(RichText::new("WhatsApp").size(FONT_CAPTION).color(pal.ink_secondary));
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.whatsapp)
+                    .hint_text("0812 3456 7890")
+                    .char_limit(20)
+                    .desired_width(220.0),
+            );
+            ui.end_row();
+        });
+        note(ui, "Username unik dan belum ditampilkan ke publik.");
+        ui.add_space(10.0);
+        ui.label(RichText::new("Penawaran & kemitraan (opsional)").size(FONT_CAPTION).strong().color(pal.ink_primary));
+        ui.checkbox(
+            &mut draft.consent_email,
+            RichText::new(account::CONSENT_EMAIL_TEXT).size(FONT_CAPTION).color(pal.ink_primary),
+        );
+        let has_wa = !draft.whatsapp.trim().is_empty();
+        if !has_wa {
+            draft.consent_whatsapp = false;
+        }
+        ui.add_enabled(
+            has_wa,
+            egui::Checkbox::new(
+                &mut draft.consent_whatsapp,
+                RichText::new(account::CONSENT_WHATSAPP_TEXT).size(FONT_CAPTION).color(pal.ink_primary),
+            ),
+        )
+        .on_disabled_hover_text("Isi nomor WhatsApp dulu.");
+        note(
+            ui,
+            "Tanpa centang, kami tidak mengirim penawaran apa pun. Persetujuan bisa dicabut kapan saja: \
+             hapus centangnya lalu Simpan.",
+        );
+        ui.add_space(8.0);
+        let changed = self.profile.as_ref() != Some(&self.profile_draft);
+        if busy {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(14.0));
+                ui.label(RichText::new(self.account_busy).size(FONT_CAPTION).color(pal.ink_secondary));
+            });
+            false
+        } else {
+            ui.add_enabled(
+                changed,
+                egui::Button::new(RichText::new("Simpan profil").strong().color(pal.on_accent))
+                    .min_size(Vec2::new(140.0, SECONDARY_BTN_HEIGHT))
+                    .fill(pal.accent),
+            )
+            .clicked()
+        }
+    }
+
     pub(super) fn draw_account_window(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
         if !self.account_open {
+            self.profile_requested = false;
             return;
         }
+        // Muat profil sekali tiap jendela dibuka (di latar).
+        if self.account.is_some() && self.profile.is_none() && !self.profile_requested && self.account_task.is_none() {
+            self.profile_requested = true;
+            if let Some(found) = self.account.clone() {
+                self.run_account_task(ctx, "Memuat profil…", move |_| match account::fetch_profile(&found) {
+                    Ok(p) => AccountEvent::ProfileLoaded(p),
+                    Err(e) => AccountEvent::Failed(format!("profil tidak bisa dimuat: {e}")),
+                });
+            }
+        }
+        let mut want_save = false;
         let mut open = true;
         let busy = self.account_task.is_some();
         let mut want_login = false;
@@ -197,8 +321,9 @@ impl SimpulLauncherApp {
                         ui.add_space(6.0);
                         note(
                             ui,
-                            "Yang disimpan: alamat email dan nama dari akun Google-mu, serta daftar \
-                             sertifikat pemasangan. Tidak ada kata sandi. Akun bisa dihapus kapan saja.",
+                            "Yang disimpan: alamat email dan nama dari akun Google-mu, profil opsional \
+                             (username, gender, WhatsApp), dan daftar sertifikat pemasangan. Data pribadi \
+                             disimpan terenkripsi. Tidak ada kata sandi. Akun bisa dihapus kapan saja.",
                         );
                         ui.add_space(12.0);
                         if busy {
@@ -248,12 +373,15 @@ impl SimpulLauncherApp {
                             ui,
                             "Sertifikat terikat ke komputer ini. Disalin ke komputer lain, sertifikat tidak berlaku.",
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        want_save = self.draw_profile_form(ui, pal, busy);
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(6.0);
                         if busy {
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Spinner::new().size(16.0));
-                                ui.label(RichText::new(self.account_busy).size(FONT_CAPTION).color(pal.ink_secondary));
-                            });
+                            ui.label(RichText::new("Tunggu sebentar…").size(FONT_CAPTION).color(pal.ink_muted));
                         } else if self.account_confirm_delete {
                             ui.label(
                                 RichText::new(
@@ -315,6 +443,15 @@ impl SimpulLauncherApp {
 
         if want_login {
             self.start_login(ctx);
+        }
+        if want_save {
+            if let Some(found) = self.account.clone() {
+                let draft = self.profile_draft.clone();
+                self.run_account_task(ctx, "Menyimpan profil…", move |_| match account::save_profile(&found, &draft) {
+                    Ok(p) => AccountEvent::ProfileSaved(p),
+                    Err(e) => AccountEvent::Failed(e),
+                });
+            }
         }
         if want_logout {
             if let Some(found) = self.account.clone() {

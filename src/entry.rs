@@ -5,6 +5,7 @@ mod cli;
 mod icons;
 mod models;
 mod registry;
+mod secure_store;
 mod suite;
 mod titlebar;
 mod ui;

@@ -616,6 +616,7 @@ impl SimpulLauncherApp {
         self.draw_account_window(ctx, pal, now);
         self.draw_about_window(ctx, pal);
         self.draw_donate_window(ctx, pal, now);
+        self.draw_install_gate(ctx, pal, now);
         self.draw_bug_window(ctx, pal, now);
         self.draw_downloads_window(ctx, pal, now);
     }

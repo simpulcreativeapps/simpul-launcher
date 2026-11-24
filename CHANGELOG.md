@@ -4,7 +4,32 @@ Semua perubahan pada Simpul Creative Launcher dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
-## [Belum dirilis]
+## [1.6.0] - 2026-11-24
+
+### Ditambahkan
+- Gerbang sebelum memasang aplikasi baru dari antarmuka, sama dengan dialog download di situs:
+  nominal wajib dipilih (boleh Rp0). Donasi lewat Saweria memakai kode `SIMPUL-XXXXXX` di kolom
+  Pesan dan diverifikasi lewat API situs (webhook Saweria); tombol Pasang terbuka sendiri begitu
+  donasi diterima, dengan konfirmasi manual bila verifikasi belum siap. Rp0 mensyaratkan membuka
+  "Beri bintang" di GitHub dan "Follow" Instagram @simpulproject.id lalu menyatakan sudah.
+  Pembaruan, pasang ulang, dan pemasangan lewat CLI tidak melewati gerbang ini.
+- Tombol "Saweria nyangkut?" untuk mengirim keluhan lewat email.
+- Carousel tangkapan layar di laci Detail aplikasi (Simpul Sync: 12 gambar asli, WebP ditanam di
+  binary, didekode saat dibutuhkan). Syarat bintang Rp0 untuk Simpul Sync memakai repo publik
+  `simpulcreativeapps/simpulsync`.
+- Kode donasi di gerbang pasang dibuat server situs (`/api/donasi/niat`, sumber `launcher`),
+  dengan pemberitahuan daftar pendukung dan centang "Ajukan agar nama dan jumlah donasi saya tidak
+  ditampilkan". Server gagal → launcher tidak membuat kode sendiri.
+- "Profil & preferensi" di jendela Akun Simpul: username, gender, WhatsApp (semua opsional, disimpan
+  terenkripsi di server) dan dua persetujuan penawaran terpisah (email, WhatsApp) yang bisa dicabut.
+- Indikator memuat: tombol berspinner dan pil "sedang bekerja" di bawah jendela untuk pekerjaan lama.
+
+### Diperbaiki
+- Jendela tidak lagi "Not Responding" saat memindai komputer, mengimpor, atau menyelesaikan
+  pemasangan: pekerjaannya dipindah ke thread latar. Launcher juga tidak lagi memindai di thread
+  antarmuka saat dibuka.
+- Pindai aplikasi terpasang membaca Registry langsung (crate `winreg`) alih-alih `reg query /s`:
+  dari lebih dari 2 menit menjadi kurang dari 0,3 detik di laptop uji.
 
 ### Diubah
 - README ditulis ulang untuk pengguna: cara memasang dan mencocokkan sha256, daftar

@@ -9,7 +9,7 @@ use eframe::egui::{
 
 use super::{Palette, RightDrawer, SimpulLauncherApp};
 use crate::models::{FilterTab, ThemeChoice, FONT_BODY, FONT_CAPTION, FONT_MICRO};
-use crate::registry::{current_launchable_target, detect_integrations, reconcile_installed_apps};
+use crate::registry::detect_integrations;
 use crate::suite::{self, LAUNCHER_VERSION};
 
 pub(super) const SIDEBAR_WIDTH: f32 = 232.0;
@@ -533,26 +533,14 @@ impl SimpulLauncherApp {
                 self.import_form.open = true;
                 self.import_form.error_banner = None;
             }
-            if ui
+            if self.is_scanning() {
+                super::background::busy_button(ui, pal, "Memindai komputer…");
+            } else if ui
                 .add(ghost("  🖥   Pindai Komputer  "))
                 .on_hover_text("Pindai ulang aplikasi Simpul yang terpasang di komputer ini")
                 .clicked()
             {
-                let updated = reconcile_installed_apps(&mut self.registry);
-                self.persist();
-                self.refresh_certificates();
-                let linked = self
-                    .registry
-                    .apps
-                    .iter()
-                    .filter(|a| current_launchable_target(a).is_some())
-                    .count();
-                let text = if updated.is_empty() {
-                    format!("Pindai selesai: {linked} aplikasi terpasang siap dibuka.")
-                } else {
-                    format!("Pindai selesai: {} aplikasi diperbarui ({linked} siap dibuka).", updated.len())
-                };
-                self.push_toast(now, text, false);
+                self.start_scan(super::background::ScanReason::Manual, now);
             }
             let copy_cmd = "simpul-creative-launcher import ./simpul-app.json --agent claude --install";
             if ui

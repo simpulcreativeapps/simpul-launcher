@@ -433,22 +433,31 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
 /// Kunci pemasangan: 32 byte acak di folder data bersama. Hanya dipakai untuk
 /// menandatangani laporan, supaya penerima bisa membatasi kiriman per pemasangan.
 pub(crate) fn install_signing_key() -> Result<ed25519_dalek::SigningKey, String> {
+    // Disimpan terenkripsi DPAPI (secure_store.rs). Berkas lama yang masih polos dibaca lalu
+    // ditulis ulang terenkripsi dengan kunci YANG SAMA, supaya sertifikat yang sudah terbit tetap sah.
     let path = shared_data_dir().join("install.key");
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        let text = text.trim();
-        if text.len() == 64 {
-            let mut seed = [0u8; 32];
-            let parsed = (0..32).all(|i| {
-                u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).map(|b| seed[i] = b).is_ok()
-            });
-            if parsed {
-                return Ok(ed25519_dalek::SigningKey::from_bytes(&seed));
+    match crate::secure_store::read(&path, "install-key") {
+        Some(Ok(read)) => {
+            let text = String::from_utf8_lossy(&read.secret).trim().to_string();
+            if text.len() == 64 {
+                let mut seed = [0u8; 32];
+                let parsed = (0..32).all(|i| {
+                    u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).map(|b| seed[i] = b).is_ok()
+                });
+                if parsed {
+                    if read.legacy_plain {
+                        crate::secure_store::write(&path, "install-key", text.as_bytes())?;
+                    }
+                    return Ok(ed25519_dalek::SigningKey::from_bytes(&seed));
+                }
             }
         }
+        // Berkas terenkripsi milik akun/komputer lain: jangan ditimpa diam-diam.
+        Some(Err(e)) => return Err(format!("kunci pemasangan tidak bisa dibuka: {e}")),
+        None => {}
     }
     let seed = random_bytes::<32>()?;
-    std::fs::create_dir_all(shared_data_dir()).map_err(|e| e.to_string())?;
-    std::fs::write(&path, hex(&seed)).map_err(|e| e.to_string())?;
+    crate::secure_store::write(&path, "install-key", hex(&seed).as_bytes())?;
     Ok(ed25519_dalek::SigningKey::from_bytes(&seed))
 }
 

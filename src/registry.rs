@@ -127,6 +127,23 @@ pub fn catalog_app(id: &str, name: &str, tagline: Option<&str>, version: &str) -
     }
 }
 
+/// Muat registry tanpa memindai komputer (cepat, untuk thread UI). Pemindaian dijalankan
+/// terpisah di latar oleh antarmuka.
+pub fn load_registry_without_scan() -> SimpulRegistry {
+    let path = registry_file_path();
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(mut reg) = serde_json::from_str::<SimpulRegistry>(&raw) {
+            if migrate_registry(&mut reg) {
+                let _ = save_registry(&reg);
+            }
+            return reg;
+        }
+    }
+    let reg = default_registry();
+    let _ = save_registry(&reg);
+    reg
+}
+
 pub fn load_or_init_registry(ephemeral: bool) -> SimpulRegistry {
     if ephemeral {
         let mut reg = default_registry();
@@ -811,151 +828,99 @@ fn canonicalize_known_simpul_app(display_name: &str) -> Option<(&'static str, &'
     }
 }
 
+/// Ubah satu entri Uninstall menjadi aplikasi Simpul yang ditemukan (None bila bukan aplikasi Simpul).
 #[cfg(target_os = "windows")]
-fn query_uninstall_registry_apps() -> Vec<DiscoveredInstalledApp> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let roots = [
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-        r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-    ];
-    let mut found = Vec::new();
-
-    for root in roots {
-        let Ok(output) = Command::new("reg")
-            .args(["query", root, "/s"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut cur_name: Option<String> = None;
-        let mut cur_ver: Option<String> = None;
-        let mut cur_loc: Option<String> = None;
-        let mut cur_icon: Option<String> = None;
-
-        let flush_entry = |name: &Option<String>,
-                           ver: &Option<String>,
-                           loc: &Option<String>,
-                           icon: &Option<String>,
-                           out: &mut Vec<DiscoveredInstalledApp>| {
-            let Some(display_name) = name.as_deref() else {
-                return;
-            };
-            let lower = display_name.to_ascii_lowercase();
-            if !(lower.contains("simpul") || lower.contains("capr") || lower.contains("opennotebook")) {
-                return;
-            }
-            // Skip launcher itself if ever registered
-            if lower.contains("creative launcher") || lower.contains("creative apps launcher") {
-                return;
-            }
-            let (id, clean_name, default_flags, pref_exes) =
-                if let Some(known) = canonicalize_known_simpul_app(display_name) {
-                    (
-                        known.0.to_string(),
-                        known.1.to_string(),
-                        known.2.to_string(),
-                        known.3,
-                    )
-                } else {
-                    (
-                        slugify_id(display_name),
-                        display_name.trim().to_string(),
-                        String::new(),
-                        &[][..],
-                    )
-                };
-
-            let mut resolved_exe: Option<PathBuf> = None;
-            if let Some(ic) = icon.as_deref().and_then(clean_icon_or_path_value) {
-                if ic.is_file()
-                    && ic
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("exe"))
-                        == Some(true)
-                {
-                    let fname = ic
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_ascii_lowercase();
-                    if !is_uninstaller_name(&fname) {
-                        resolved_exe = Some(ic);
-                    }
-                }
-            }
-            if resolved_exe.is_none() {
-                if let Some(loc_dir) = loc.as_deref().and_then(clean_icon_or_path_value) {
-                    resolved_exe = find_exe_in_dir(&loc_dir, pref_exes);
-                }
-            }
-            if let Some(exe_path) = resolved_exe {
-                let install_dir = exe_path
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| exe_path.clone());
-                let version = ver
-                    .as_deref()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "1.0.0".to_string());
-                out.push(DiscoveredInstalledApp {
-                    id,
-                    name: clean_name,
-                    version,
-                    exe_path,
-                    install_dir,
-                    default_launch_flags: default_flags,
-                    source_label: "Windows Registry".to_string(),
-                });
-            }
-        };
-
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("HKEY_") {
-                flush_entry(&cur_name, &cur_ver, &cur_loc, &cur_icon, &mut found);
-                cur_name = None;
-                cur_ver = None;
-                cur_loc = None;
-                cur_icon = None;
-                continue;
-            }
-            if let Some(val) = parse_reg_sz_value(trimmed, "DisplayName") {
-                cur_name = Some(val);
-            } else if let Some(val) = parse_reg_sz_value(trimmed, "DisplayVersion") {
-                cur_ver = Some(val);
-            } else if let Some(val) = parse_reg_sz_value(trimmed, "InstallLocation") {
-                cur_loc = Some(val);
-            } else if let Some(val) = parse_reg_sz_value(trimmed, "DisplayIcon") {
-                cur_icon = Some(val);
-            }
-        }
-        flush_entry(&cur_name, &cur_ver, &cur_loc, &cur_icon, &mut found);
+fn discovered_from_uninstall_entry(
+    display_name: &str,
+    ver: Option<&str>,
+    loc: Option<&str>,
+    icon: Option<&str>,
+) -> Option<DiscoveredInstalledApp> {
+    let lower = display_name.to_ascii_lowercase();
+    if !(lower.contains("simpul") || lower.contains("capr") || lower.contains("opennotebook")) {
+        return None;
     }
+    // Launcher sendiri tidak dimasukkan.
+    if lower.contains("creative launcher") || lower.contains("creative apps launcher") {
+        return None;
+    }
+    let (id, clean_name, default_flags, pref_exes) = if let Some(known) = canonicalize_known_simpul_app(display_name) {
+        (known.0.to_string(), known.1.to_string(), known.2.to_string(), known.3)
+    } else {
+        (slugify_id(display_name), display_name.trim().to_string(), String::new(), &[][..])
+    };
 
-    found
+    let mut resolved_exe: Option<PathBuf> = None;
+    if let Some(ic) = icon.and_then(clean_icon_or_path_value) {
+        let is_exe = ic.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("exe")) == Some(true);
+        if ic.is_file() && is_exe {
+            let fname = ic.file_name().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+            if !is_uninstaller_name(&fname) {
+                resolved_exe = Some(ic);
+            }
+        }
+    }
+    if resolved_exe.is_none() {
+        if let Some(loc_dir) = loc.and_then(clean_icon_or_path_value) {
+            resolved_exe = find_exe_in_dir(&loc_dir, pref_exes);
+        }
+    }
+    let exe_path = resolved_exe?;
+    let install_dir = exe_path.parent().map(Path::to_path_buf).unwrap_or_else(|| exe_path.clone());
+    let version = ver
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "1.0.0".to_string());
+    Some(DiscoveredInstalledApp {
+        id,
+        name: clean_name,
+        version,
+        exe_path,
+        install_dir,
+        default_launch_flags: default_flags,
+        source_label: "Windows Registry".to_string(),
+    })
 }
 
+/// Baca daftar aplikasi terpasang (kunci Uninstall) langsung lewat API Registry Windows.
+/// Dulu memakai `reg query /s` + mengurai teks: 17 detik atau lebih per kunci di laptop pemilik.
+/// Sekarang hanya `DisplayName` tiap entri yang dibaca; kolom lain hanya untuk entri yang cocok.
 #[cfg(target_os = "windows")]
-fn parse_reg_sz_value(line: &str, field: &str) -> Option<String> {
-    let rest = line.strip_prefix(field)?;
-    let rest = rest.trim_start();
-    if let Some(after_type) = rest.strip_prefix("REG_SZ") {
-        return Some(after_type.trim().to_string());
+fn query_uninstall_registry_apps() -> Vec<DiscoveredInstalledApp> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+
+    const UNINSTALL: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
+    const UNINSTALL_WOW: &str = r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
+    let roots = [
+        (HKEY_CURRENT_USER, UNINSTALL),
+        (HKEY_LOCAL_MACHINE, UNINSTALL),
+        (HKEY_LOCAL_MACHINE, UNINSTALL_WOW),
+    ];
+    let mut found = Vec::new();
+    for (hive, path) in roots {
+        let Ok(root) = RegKey::predef(hive).open_subkey_with_flags(path, KEY_READ) else {
+            continue;
+        };
+        for sub in root.enum_keys().flatten() {
+            let Ok(entry) = root.open_subkey_with_flags(&sub, KEY_READ) else {
+                continue;
+            };
+            let Ok(name) = entry.get_value::<String, _>("DisplayName") else {
+                continue;
+            };
+            let get = |field: &str| entry.get_value::<String, _>(field).ok();
+            if let Some(app) = discovered_from_uninstall_entry(
+                &name,
+                get("DisplayVersion").as_deref(),
+                get("InstallLocation").as_deref(),
+                get("DisplayIcon").as_deref(),
+            ) {
+                found.push(app);
+            }
+        }
     }
-    if let Some(after_type) = rest.strip_prefix("REG_EXPAND_SZ") {
-        return Some(after_type.trim().to_string());
-    }
-    None
+    found
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1098,7 +1063,26 @@ fn is_placeholder_launch_flags(flags: &str) -> bool {
 /// Reconciles the launcher registry with real installed Simpul apps detected on this PC.
 /// Fixes placeholder paths in existing saved registries so clicking "Open" launches the real `.exe`.
 pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
-    let discovered = discover_installed_apps_on_pc();
+    apply_discovered_apps(reg, discover_installed_apps_on_pc(), &std::collections::BTreeMap::new())
+}
+
+/// Hash SHA-256 tiap .exe yang ditemukan, dihitung di thread latar (berkas bisa besar).
+/// Kunci = jalur .exe.
+pub fn hash_discovered_apps(discovered: &[DiscoveredInstalledApp]) -> std::collections::BTreeMap<String, String> {
+    discovered
+        .iter()
+        .map(|d| (d.exe_path.display().to_string(), compute_sha256_short(&d.exe_path)))
+        .collect()
+}
+
+/// Bagian cepat dari pemindaian: menerapkan hasil `discover_installed_apps_on_pc` ke registry.
+/// Antarmuka menjalankan penemuan (lambat: `reg query` dan cek disk) di thread latar, lalu
+/// memanggil fungsi ini di thread UI supaya jendela tidak "Not Responding".
+pub fn apply_discovered_apps(
+    reg: &mut SimpulRegistry,
+    discovered: Vec<DiscoveredInstalledApp>,
+    hashes: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
     let mut updated_names = Vec::new();
 
     for found in discovered {
@@ -1161,7 +1145,10 @@ pub fn reconcile_installed_apps(reg: &mut SimpulRegistry) -> Vec<String> {
                 latest_version: found.version.clone(),
                 released_date: "terdeteksi".to_string(),
                 download_size_mb: real_size_mb.unwrap_or(16.0),
-                sha256: compute_sha256_short(&found.exe_path),
+                sha256: hashes
+                    .get(&exe_str)
+                    .cloned()
+                    .unwrap_or_else(|| compute_sha256_short(&found.exe_path)),
                 profile: BuildProfile::Release,
                 origin: AgentOrigin::SimpulSuite,
                 package_format: PackageFormat::NativeExe,

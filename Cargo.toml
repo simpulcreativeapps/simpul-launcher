@@ -1,6 +1,6 @@
 [package]
 name = "simpul-creative-launcher"
-version = "1.5.1"
+version = "1.6.0"
 edition = "2021"
 description = "Simpul Creative Launcher: pasang, perbarui, dan buka aplikasi Simpul Creative Apps"
 homepage = "https://simpulproject.com"
@@ -23,10 +23,16 @@ base64 = "0.23"
 ed25519-dalek = "3"
 eframe = "0.31"
 getrandom = "0.3"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 simpul-guard = { git = "https://github.com/simpulcreativeapps/simpul-guard", rev = "6e6dcc4" }
+
+[target.'cfg(windows)'.dependencies]
+# Baca kunci Uninstall langsung (pindai aplikasi terpasang), bukan lewat reg.exe.
+winreg = "0.56"
+# Enkripsi DPAPI untuk token sesi dan kunci pemasangan (src/secure_store.rs).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }

@@ -22,15 +22,18 @@ use crate::models::{
 };
 use crate::registry::{
     current_launchable_target, detect_integrations, detect_profile_from_path, import_into_registry,
-    install_in_registry, load_or_init_registry, open_install_folder,
-    reconcile_installed_apps, registry_mtime, save_registry, set_app_executable_path,
+    install_in_registry, load_or_init_registry, load_registry_without_scan, open_install_folder,
+    registry_mtime, save_registry, set_app_executable_path,
     split_launch_flags, try_open_in_agent, uninstall_in_registry, ImportRequest,
 };
 use crate::suite::{self, GuardHub, GuardSnapshot};
 
 mod account_ui;
+mod background;
 mod shell_ui;
 mod suite_ui;
+mod install_gate;
+mod screens;
 
 
 /// Tebal cincin fokus papan ketik.
@@ -462,6 +465,12 @@ pub struct SimpulLauncherApp {
     donate_sent: bool,
     supporter: bool,
     bug_open: bool,
+    /// Gerbang donasi / bintang + follow sebelum memasang aplikasi baru.
+    install_gate: Option<install_gate::InstallGate>,
+    /// Mode tangkapan layar: laci Detail yang dibuka begitu aplikasinya muncul di daftar.
+    shot_detail: Option<String>,
+    /// Tangkapan layar aplikasi di laci Detail (didekode saat dibutuhkan).
+    screens: screens::ScreenCache,
     bug_text: String,
     bug_include_log: bool,
     /// Hasil kiriman laporan yang sedang berjalan di thread latar.
@@ -471,7 +480,15 @@ pub struct SimpulLauncherApp {
     account_open: bool,
     certs_loaded: bool,
     account_confirm_delete: bool,
+    /// Profil tersimpan di server (None = belum dimuat). Tidak pernah ditulis ke disk.
+    profile: Option<crate::account::Profile>,
+    /// Isian form profil yang sedang diubah.
+    profile_draft: crate::account::Profile,
+    /// Profil sudah diminta sejak jendela Akun dibuka (supaya galat tidak diulang tiap frame).
+    profile_requested: bool,
     account_task: Option<account_ui::AccountSlot>,
+    /// Pekerjaan lama di thread latar (pindai, impor, pasang). Lihat ui/background.rs.
+    jobs: Vec<background::BgJob>,
     account_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     account_busy: &'static str,
     /// Hasil pemeriksaan sertifikat per id aplikasi (dan `launcher`).
@@ -487,7 +504,9 @@ pub struct SimpulLauncherApp {
 impl SimpulLauncherApp {
     pub fn new(ctx: &egui::Context, screenshot_target: Option<PathBuf>) -> Self {
         let ephemeral = screenshot_target.is_some();
-        let mut registry = load_or_init_registry(ephemeral);
+        // Mode potret memindai langsung supaya hasilnya pasti; jendela biasa memuat registry
+        // dulu lalu memindai komputer di latar (reg query bisa makan beberapa detik).
+        let mut registry = if ephemeral { load_or_init_registry(true) } else { load_registry_without_scan() };
         if !ephemeral {
             // Tema yang dipilih di aplikasi Simpul lain ikut berlaku di sini.
             if let Some((theme, reduce)) = suite::load_shared_theme::<ThemeChoice>() {
@@ -515,11 +534,14 @@ impl SimpulLauncherApp {
         } else {
             String::new()
         };
+        // Mode tangkapan layar: SIMPUL_SHOT_VIEW=detail-<id> membuka laci Detail begitu aplikasinya
+        // ada di daftar. Id boleh id launcher atau id manifest (mis. "sync").
+        let shot_detail = shot_view.strip_prefix("detail-").map(str::to_string);
 
         let supporter_now = !ephemeral && suite::is_supporter();
         let splash_frames = if supporter_now { SUPPORTER_SPLASH_FRAMES } else { INITIAL_SPLASH_FRAMES };
 
-        Self {
+        let mut app = Self {
             textures,
             splash_frames_left: if shot_view == "badge" { 400 } else { splash_frames },
             splash_total_frames: if shot_view == "badge" { 800 } else { splash_frames },
@@ -532,7 +554,9 @@ impl SimpulLauncherApp {
             filter: FilterTab::All,
             nav: shell_ui::NavPage::Home,
             search_query: String::new(),
+            // Mode tangkapan layar: SIMPUL_SHOT_VIEW=detail-<id aplikasi> membuka laci Detail.
             drawer: RightDrawer::None,
+            shot_detail,
             settings_open: shot_view == "settings",
             uninstall_confirm_id: None,
             launch_options_app_id: None,
@@ -563,6 +587,8 @@ impl SimpulLauncherApp {
             donate_sent: false,
             supporter: if ephemeral { shot_view == "badge" || shot_view == "about" } else { suite::is_supporter() },
             bug_open: shot_view == "bug",
+            install_gate: install_gate::InstallGate::for_shot(&shot_view),
+            screens: screens::ScreenCache::default(),
             bug_text: String::new(),
             bug_include_log: false,
             bug_send: None,
@@ -570,14 +596,22 @@ impl SimpulLauncherApp {
             account_open: shot_view == "account",
             certs_loaded: false,
             account_confirm_delete: false,
+            profile: None,
+            profile_draft: crate::account::Profile::default(),
+            profile_requested: false,
             account_task: None,
+            jobs: Vec::new(),
             account_cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             account_busy: "",
             cert_cache: std::collections::BTreeMap::new(),
             update_started: false,
             update_skipped: false,
             update_preview: shot_view == "update",
+        };
+        if !ephemeral {
+            app.start_scan(background::ScanReason::Startup, 0.0);
         }
+        app
     }
 
     fn persist(&mut self) {
@@ -724,27 +758,21 @@ impl SimpulLauncherApp {
                     self.push_toast(now, msg, false);
                 }
             } else {
-                match install_in_registry(
-                    &mut self.registry,
-                    &done_task.app_id,
-                    done_task.actor,
-                    false,
-                ) {
-                    Ok(updated) => {
-                        self.persist();
-                        self.push_toast(
-                            now,
-                            format!(
-                                "{} v{} terpasang",
-                                updated.name, updated.latest_version
-                            ),
-                            false,
-                        );
-                    }
-                    Err(e) => {
-                        self.push_toast(now, e, true);
-                    }
-                }
+                // Menyalin berkas aplikasi bisa lama: kerjakan di latar (lihat ui/background.rs).
+                let app_id = done_task.app_id.clone();
+                let actor = done_task.actor;
+                let name = self
+                    .registry
+                    .apps
+                    .iter()
+                    .find(|a| a.id == app_id)
+                    .map_or_else(|| app_id.clone(), |a| a.name.clone());
+                self.start_registry_job(
+                    background::JobKind::Install(app_id.clone()),
+                    format!("Memasang {name}…"),
+                    now,
+                    move |reg| install_in_registry(reg, &app_id, actor, false),
+                );
             }
         }
     }
@@ -758,7 +786,8 @@ impl SimpulLauncherApp {
         if current_mtime.is_some() && current_mtime != self.last_mtime {
             self.last_mtime = current_mtime;
             let prev_event = self.registry.events.first().map(|e| e.summary.clone());
-            self.registry = load_or_init_registry(false);
+            // CLI sudah memindai sebelum menulis registry, jadi cukup dimuat ulang.
+            self.registry = load_registry_without_scan();
             self.integrations = detect_integrations(&self.registry.settings);
             if let Some(latest) = self.registry.events.first() {
                 if Some(latest.summary.as_str()) != prev_event.as_deref() {
@@ -1447,7 +1476,7 @@ impl SimpulLauncherApp {
                                 .fill(pal.accent)
                                 .stroke(Stroke::new(1.2_f32, pal.accent));
                                 if ui.add(inst_btn).clicked() {
-                                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                                    self.open_install_gate(&app.id, &app.name);
                                 }
                             }
                         }
@@ -1657,7 +1686,7 @@ impl SimpulLauncherApp {
                                         self.launch_app(now, &app);
                                     }
                                 } else if ui.button("Pasang").clicked() {
-                                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                                    self.open_install_gate(&app.id, &app.name);
                                 }
                             });
                             ui.end_row();
@@ -1667,6 +1696,17 @@ impl SimpulLauncherApp {
     }
 
     fn draw_right_drawer(&mut self, ctx: &egui::Context, pal: Palette, now: f64) {
+        if let Some(want) = self.shot_detail.clone() {
+            if let Some(a) = self
+                .registry
+                .apps
+                .iter()
+                .find(|a| a.id == want || suite::manifest_id_for(&a.id) == want || screens::shots_key(&a.id) == Some(want.as_str()))
+            {
+                self.drawer = RightDrawer::AppDetails(a.id.clone());
+                self.shot_detail = None;
+            }
+        }
         let is_open = self.drawer != RightDrawer::None;
         let open_t = ctx.animate_bool_with_time(
             egui::Id::new("details-drawer-anim"),
@@ -1770,6 +1810,7 @@ impl SimpulLauncherApp {
                     .size(FONT_CAPTION)
                     .color(pal.ink_secondary),
             );
+            self.draw_screenshot_carousel(ui, &app.id, pal);
 
             ui.add_space(12.0);
             ui.horizontal(|ui| {
@@ -1813,7 +1854,7 @@ impl SimpulLauncherApp {
                     )
                     .clicked()
                 {
-                    self.enqueue_install(now, &app.id, AgentOrigin::SimpulSuite);
+                    self.open_install_gate(&app.id, &app.name);
                 }
             });
 
@@ -1915,19 +1956,10 @@ impl SimpulLauncherApp {
                         }
                     }
                 }
-                if ui.button("Pindai ulang").clicked() {
-                    let updated = reconcile_installed_apps(&mut self.registry);
-                    self.persist();
-                    self.exec_path_app_id = None;
-                    self.push_toast(
-                        now,
-                        if updated.is_empty() {
-                            "Pindai selesai: semua lokasi sudah cocok.".to_string()
-                        } else {
-                            format!("Pindai selesai: {} pembaruan ditemukan.", updated.len())
-                        },
-                        false,
-                    );
+                if self.is_scanning() {
+                    background::busy_button(ui, pal, "Memindai…");
+                } else if ui.button("Pindai ulang").clicked() {
+                    self.start_scan(background::ScanReason::Details, now);
                 }
             });
 
@@ -2311,7 +2343,9 @@ impl SimpulLauncherApp {
                         } else {
                             "Impor"
                         };
-                        if ui
+                        if self.is_importing() {
+                            background::busy_button(ui, pal, "Mengimpor dan memeriksa berkas…");
+                        } else if ui
                             .add(
                                 egui::Button::new(
                                     RichText::new(submit_lbl).strong().color(pal.on_accent),
@@ -2341,27 +2375,14 @@ impl SimpulLauncherApp {
                                 allow_debug: self.import_form.allow_debug_override,
                                 auto_install: self.import_form.auto_install,
                             };
-                            match import_into_registry(&mut self.registry, req) {
-                                Ok(added) => {
-                                    self.persist();
-                                    self.import_form.open = false;
-                                    self.import_form.error_banner = None;
-                                    self.push_toast(
-                                        now,
-                                        format!(
-                                            "{} mengimpor {} v{} ({})",
-                                            added.origin.label(),
-                                            added.name,
-                                            added.latest_version,
-                                            added.profile.short_label()
-                                        ),
-                                        false,
-                                    );
-                                }
-                                Err(e) => {
-                                    self.import_form.error_banner = Some(e);
-                                }
-                            }
+                            // Impor menghitung hash berkas (bisa ratusan MB): kerjakan di latar.
+                            self.import_form.error_banner = None;
+                            self.start_registry_job(
+                                background::JobKind::Import,
+                                "Mengimpor aplikasi…",
+                                now,
+                                move |reg| import_into_registry(reg, req),
+                            );
                         }
                         if ui.button("Batal").clicked() {
                             self.import_form.open = false;
@@ -2655,6 +2676,7 @@ impl eframe::App for SimpulLauncherApp {
         self.paint_glass_backdrop(ctx);
         self.handle_zoom_shortcuts(ctx);
         self.poll_external_cli_changes(now);
+        self.poll_jobs(now);
         self.sync_guard(ctx, now);
 
         if !self.queue.is_empty() {
@@ -2670,11 +2692,13 @@ impl eframe::App for SimpulLauncherApp {
 
         if self.draw_discontinued(ctx, pal, now) {
             self.draw_toasts(ctx, pal, now);
+            self.draw_busy_indicator(ctx, pal, now);
             return;
         }
 
         if self.draw_required_update(ctx, pal, now) {
             self.draw_toasts(ctx, pal, now);
+            self.draw_busy_indicator(ctx, pal, now);
             self.handle_screenshot_lifecycle(ctx);
             return;
         }
@@ -2820,6 +2844,7 @@ impl eframe::App for SimpulLauncherApp {
         self.draw_modals(ctx, pal, now);
         self.draw_suite_windows(ctx, pal, now);
         self.draw_toasts(ctx, pal, now);
+        self.draw_busy_indicator(ctx, pal, now);
         self.handle_screenshot_lifecycle(ctx);
     }
 }

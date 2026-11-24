@@ -36,16 +36,20 @@ fn certificate_file(app: &str) -> PathBuf {
     shared_data_dir().join("certificates").join(format!("{app}.json"))
 }
 
-/// Akun yang tersimpan di komputer ini (bila pengguna sudah masuk).
+/// Akun yang tersimpan di komputer ini (bila pengguna sudah masuk). Token sesi disimpan
+/// terenkripsi DPAPI (lihat secure_store.rs); berkas lama yang masih polos dienkripsi ulang.
 pub fn load_account() -> Option<Account> {
-    let raw = std::fs::read_to_string(account_file()).ok()?;
-    serde_json::from_str(&raw).ok()
+    let read = crate::secure_store::read(&account_file(), "account").and_then(Result::ok)?;
+    let account: Account = serde_json::from_slice(&read.secret).ok()?;
+    if read.legacy_plain {
+        let _ = save_account(&account);
+    }
+    Some(account)
 }
 
 fn save_account(account: &Account) -> Result<(), String> {
-    std::fs::create_dir_all(shared_data_dir()).map_err(|e| e.to_string())?;
     let text = serde_json::to_string(account).map_err(|e| e.to_string())?;
-    std::fs::write(account_file(), text).map_err(|e| e.to_string())
+    crate::secure_store::write(&account_file(), "account", text.as_bytes())
 }
 
 fn forget_account() {
@@ -190,6 +194,72 @@ pub fn delete_account(account: &Account) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- profil dan persetujuan
+
+/// Profil opsional. Disimpan terenkripsi di server; di komputer ini hanya ada di memori.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Profile {
+    pub username: String,
+    pub gender: String,
+    pub whatsapp: String,
+    pub consent_email: bool,
+    pub consent_whatsapp: bool,
+    /// Versi teks persetujuan yang berlaku di server; dikirim balik saat menyimpan.
+    pub consent_version: String,
+}
+
+/// (nilai, label). Harus sama dengan GENDERS di simpul-akun/src/profil.js.
+pub const GENDERS: [(&str, &str); 4] = [
+    ("", "Tidak diisi"),
+    ("laki-laki", "Laki-laki"),
+    ("perempuan", "Perempuan"),
+    ("tidak_disebut", "Tidak ingin menyebut"),
+];
+/// Harus sama dengan CONSENT_TEXT di simpul-akun/src/profil.js.
+pub const CONSENT_EMAIL_TEXT: &str = "Boleh kirimi saya penawaran dan ajakan kemitraan dari Simpul lewat email.";
+pub const CONSENT_WHATSAPP_TEXT: &str =
+    "Boleh kirimi saya penawaran dan ajakan kemitraan dari Simpul lewat WhatsApp.";
+
+fn profile_from(value: &serde_json::Value) -> Profile {
+    let user = value.get("user").cloned().unwrap_or_default();
+    let text = |k: &str| user.get(k).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+    let flag = |k: &str| user.get(k).and_then(serde_json::Value::as_bool).unwrap_or(false);
+    Profile {
+        username: text("username"),
+        gender: text("gender"),
+        whatsapp: text("whatsapp"),
+        consent_email: flag("consent_email"),
+        consent_whatsapp: flag("consent_whatsapp"),
+        consent_version: text("consent_version"),
+    }
+}
+
+pub fn fetch_profile(account: &Account) -> Result<Profile, String> {
+    let (status, value) = call("/v1/me", &serde_json::json!({}), Some(&account.token))?;
+    if status != 200 {
+        return Err(error_of(status, &value));
+    }
+    Ok(profile_from(&value))
+}
+
+/// Simpan profil. Server memeriksa dan merapikan isian (mis. nomor jadi +62...) lalu
+/// mengembalikan profil tersimpan.
+pub fn save_profile(account: &Account, profile: &Profile) -> Result<Profile, String> {
+    let body = serde_json::json!({
+        "username": profile.username.trim(),
+        "gender": profile.gender,
+        "whatsapp": profile.whatsapp.trim(),
+        "consent_email": profile.consent_email,
+        "consent_whatsapp": profile.consent_whatsapp,
+        "consent_version": profile.consent_version,
+    });
+    let (status, value) = call("/v1/profile", &body, Some(&account.token))?;
+    if status != 200 {
+        return Err(error_of(status, &value));
+    }
+    Ok(profile_from(&value))
+}
+
 // ---------------------------------------------------------------- sertifikat
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +346,18 @@ mod tests {
         assert_eq!(check_certificate(&fake, "sync"), CertificateStatus::Invalid);
         // Tanpa berkas: tidak bersertifikat, bukan galat.
         assert_eq!(certificate_status("aplikasi-yang-tidak-ada"), CertificateStatus::None);
+    }
+
+    #[test]
+    fn profile_reply_is_read_and_missing_fields_are_empty() {
+        let v = serde_json::json!({ "ok": true, "user": {
+            "email": "a@contoh.test", "username": "rani.art", "gender": "perempuan",
+            "whatsapp": "+6281234567890", "consent_email": true, "consent_version": "2026-11-24" } });
+        let p = profile_from(&v);
+        assert_eq!(p.username, "rani.art");
+        assert!(p.consent_email && !p.consent_whatsapp);
+        assert_eq!(profile_from(&serde_json::json!({})), Profile::default());
+        assert!(GENDERS.iter().any(|(v, _)| *v == p.gender));
     }
 
     #[test]
