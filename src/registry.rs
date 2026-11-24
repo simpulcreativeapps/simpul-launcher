@@ -1128,9 +1128,21 @@ pub fn apply_discovered_apps(
                     app.launch_flags = found.default_launch_flags.clone();
                 }
                 changed = true;
-            } else if is_placeholder_launch_flags(&app.launch_flags) {
-                app.launch_flags = found.default_launch_flags.clone();
-                changed = true;
+            } else {
+                // Aplikasi diperbarui di luar launcher (atau lewat installer yang dijalankan launcher):
+                // exe-nya masih di tempat yang sama, tapi versinya berubah. Ikuti versi hasil pindaian,
+                // kalau tidak launcher terus menawarkan "Perbarui" untuk versi yang sudah terpasang.
+                if let InstallState::Installed { version, .. } = &mut app.install_state {
+                    let baru = found.version.trim();
+                    if !baru.is_empty() && version.as_str() != baru {
+                        *version = baru.to_string();
+                        changed = true;
+                    }
+                }
+                if is_placeholder_launch_flags(&app.launch_flags) {
+                    app.launch_flags = found.default_launch_flags.clone();
+                    changed = true;
+                }
             }
 
             if changed {
@@ -1569,5 +1581,33 @@ mod tests {
         assert_eq!(slugify_id(&app.id), app.id);
         assert!(is_safe_version(&app.latest_version));
         assert!(!app.install_state.is_installed());
+    }
+
+    #[test]
+    fn version_follows_scan_after_update() {
+        // Sync 4.2.0 tercatat terpasang; setelah diperbarui, pindaian menemukan 4.2.1 di exe yang sama.
+        let exe = std::env::current_exe().unwrap();
+        let mut reg = default_registry();
+        let mut app = catalog_app("simpulsync-4", "Simpul Sync", None, "4.2.1");
+        app.install_state = InstallState::Installed {
+            version: "4.2.0".into(),
+            install_path: exe.display().to_string(),
+            installed_at: "y".into(),
+        };
+        reg.apps = vec![app];
+        let found = DiscoveredInstalledApp {
+            id: "simpulsync-4".into(),
+            name: "Simpul Sync".into(),
+            version: "4.2.1".into(),
+            exe_path: exe.clone(),
+            install_dir: exe.parent().unwrap().to_path_buf(),
+            default_launch_flags: String::new(),
+            source_label: "Windows Registry".into(),
+        };
+        apply_discovered_apps(&mut reg, vec![found], &std::collections::BTreeMap::new());
+        match &reg.apps[0].install_state {
+            InstallState::Installed { version, .. } => assert_eq!(version, "4.2.1"),
+            InstallState::NotInstalled => panic!("harus tetap terpasang"),
+        }
     }
 }

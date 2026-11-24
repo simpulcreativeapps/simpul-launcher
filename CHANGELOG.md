@@ -4,6 +4,12 @@ Semua perubahan pada Simpul Creative Launcher dicatat di sini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.6.2] - 2026-11-24
+
+### Diperbaiki
+- Setelah aplikasi diperbarui (mis. Simpul Sync 4.2.0 ke 4.2.1), launcher kini membaca versi terpasang
+  yang baru dari pindaian, tidak lagi terus menawarkan "Perbarui" untuk versi yang sudah terpasang.
+
 ## [1.6.1] - 2026-11-24
 
 ### Diperbaiki
