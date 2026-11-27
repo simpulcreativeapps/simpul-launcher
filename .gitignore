@@ -3,3 +3,8 @@
 *.key
 *.pem
 .env
+
+# Panduan agen AI lokal (tidak dipublikasikan)
+AGENTS.md
+CLAUDE.md
+GEMINI.md

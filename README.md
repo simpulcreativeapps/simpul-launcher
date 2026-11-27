@@ -67,7 +67,7 @@ simpul-creative-launcher uninstall <id>
 
 Hanya build rilis yang diterima: artefak `target/debug` atau yang bertanda `"profile": "debug"` ditolak kecuali `--allow-debug` diberikan, dan digest sha256 dicek sebelum impor atau pemasangan. Contoh manifest ada di [`examples/`](examples/).
 
-Agen AI di terminal, misalnya Claude Code atau Antigravity (`agy`), bisa memakai perintah yang sama dengan `--agent <nama>`; aplikasi yang mereka pasang langsung muncul di jendela desktop. Panduannya ada di [`CLAUDE.md`](CLAUDE.md), atau jalankan `simpul-creative-launcher agent-config`.
+Agen AI di terminal, misalnya Claude Code atau Antigravity (`agy`), bisa memakai perintah yang sama dengan `--agent <nama>`; aplikasi yang mereka pasang langsung muncul di jendela desktop. Panduannya bisa dilihat dengan menjalankan `simpul-creative-launcher agent-config`.
 
 ## Bangun dari kode
 
